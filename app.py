@@ -15,7 +15,7 @@ except Exception:
 
 # ১. পেজ কনফিগারেশন
 st.set_page_config(
-    page_title="Practice Sheet Studio",
+    page_title="SMART SCANNER",
     layout="centered",
     initial_sidebar_state="expanded"
 )
@@ -1103,8 +1103,8 @@ def render_results_and_review(raw_pdf, file_key):
 st.markdown("""
 <div class="studio-header">
     <div>
-        <h1 class="studio-title">Practice Sheet Studio</h1>
-        <p class="studio-sub">সমাধান বাদ দিয়ে পরিচ্ছন্ন প্র্যাকটিস শিট</p>
+        <h1 class="studio-title">SMART SCANNER</h1>
+        <p class="studio-sub">Cut Out Only Questions From PDF</p>
     </div>
     <span class="studio-badge">VISION ENGINE</span>
 </div>
