@@ -28,8 +28,18 @@ code, pre, .mono-num, [data-testid="stSliderTickBar"] > div, [data-testid="stThu
     visibility: hidden !important;
     display: none !important;
 }
-header {
+
+/* অদৃশ্য হেডার যেন বক্স এডিটর বারের ক্লিক আটকে না দেয় */
+header, [data-testid="stHeader"] {
     background: transparent !important;
+    pointer-events: none !important;
+}
+header button,
+[data-testid="stHeader"] button,
+[data-testid="stToolbar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    pointer-events: auto !important;
 }
 
 .stApp {
@@ -87,6 +97,7 @@ header {
         margin-bottom: 0 !important;
         width: 100% !important;
         align-self: start !important;
+        z-index: 20 !important;
     }
 
     body:not([data-device-mode="phone"]) .block-container [data-testid="stExpander"] {
@@ -389,10 +400,18 @@ body[data-device-mode="phone"] [data-testid="stExpander"] details summary {
     overflow: hidden !important;
 }
 [data-testid="stExpander"] details summary {
-    padding: 0.48rem 0.75rem !important;
-    font-size: 0.82rem !important;
-    font-weight: 500 !important;
+    padding: 0.55rem 0.85rem !important;
+    font-size: 0.84rem !important;
+    font-weight: 600 !important;
     color: var(--text-primary) !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    position: relative !important;
+    z-index: 25 !important;
+    transition: background-color 0.15s ease, color 0.15s ease !important;
+}
+[data-testid="stExpander"] details summary * {
+    pointer-events: none !important;
 }
 [data-testid="stExpander"] details summary:hover {
     background-color: var(--bg-slate-hover) !important;
