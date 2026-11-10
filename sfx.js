@@ -1,5 +1,5 @@
 /* =========================================================
-   sfx.js  —  সিন্থেসাইজ করা নরম সাউন্ড এফেক্ট (কোনো অডিও ফাইল লাগে না)
+   sfx.js  —  সিন্থেসাইজ করা খুব নরম সাউন্ড + ঘন কুয়াশা (fog) ব্যাকগ্রাউন্ড (কোনো অডিও ফাইল লাগে না)
    (নতুন ফাইল: app.py এর শেষে থাকা ছোট লোডার এটাকে ব্রাউজারের মূল পেজে বসায়)
 
    কনসোল থেকে টিউন করা যায়:
@@ -17,9 +17,9 @@
   }
   function lsSet(k, v) { try { W.localStorage.setItem(k, v); } catch (e) {} }
 
-  var LEVELS = [0, 0.3, 0.6, 1.0];
+  var LEVELS = [0, 0.35, 0.6, 1.0];
   var LEVEL_NAMES = ['বন্ধ', 'নিচু', 'মাঝারি', 'জোরে'];
-  var level = parseInt(lsGet('ps_sfx_level', '2'), 10);
+  var level = parseInt(lsGet('ps_sfx_level_v2', '2'), 10);
   if (isNaN(level) || level < 0 || level > 3) level = 2;
   var ambOn = lsGet('ps_amb_on', '1') === '1';
   var lastSaveAt = 0;
@@ -34,65 +34,72 @@
       try { ctx = new AC(); } catch (e) { return null; }
       master = ctx.createGain();
       master.gain.value = LEVELS[level];
+      /* উঁচু ফ্রিকোয়েন্সি কেটে দেওয়া: শব্দ গোল ও নরম থাকে */
       var lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 3400; lp.Q.value = 0.5;
+      lp.type = 'lowpass'; lp.frequency.value = 1900; lp.Q.value = 0.3;
       var comp = ctx.createDynamicsCompressor();
-      var dly = ctx.createDelay(0.5); dly.delayTime.value = 0.13;
-      var fb = ctx.createGain(); fb.gain.value = 0.26;
-      var wet = ctx.createGain(); wet.gain.value = 0.20;
+      /* খুব হালকা, অন্ধকার প্রতিধ্বনি (reverb-এর মতো) */
+      var dly = ctx.createDelay(0.8); dly.delayTime.value = 0.21;
+      var fbLp = ctx.createBiquadFilter(); fbLp.type = 'lowpass'; fbLp.frequency.value = 1100;
+      var fb = ctx.createGain(); fb.gain.value = 0.28;
+      var wet = ctx.createGain(); wet.gain.value = 0.14;
       master.connect(lp);
       lp.connect(comp);
-      lp.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(comp);
+      lp.connect(dly); dly.connect(fbLp); fbLp.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(comp);
       comp.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
     return ctx;
   }
 
+  /* একটি নরম নোট: ধীরে ফুটে ওঠে, ধীরে মিলিয়ে যায়; সঙ্গে খুব ক্ষীণ উপরের সুর */
   function tone(f0, t0, dur, o) {
     o = o || {};
-    var osc = ctx.createOscillator();
-    var g = ctx.createGain();
     var t = ctx.currentTime + t0;
-    var v = o.vol || 0.1;
-    var a = o.attack || 0.008;
-    osc.type = o.type || 'sine';
-    osc.frequency.setValueAtTime(f0, t);
-    if (o.f1) osc.frequency.exponentialRampToValueAtTime(o.f1, t + dur * 0.9);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(v, t + a);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g); g.connect(master);
-    osc.start(t); osc.stop(t + dur + 0.03);
+    var v = o.vol || 0.05;
+    var a = o.attack || 0.025;
+    var parts = [[1, 1, dur], [2, 0.10, dur * 0.55]];
+    for (var i = 0; i < parts.length; i++) {
+      var osc = ctx.createOscillator();
+      var g = ctx.createGain();
+      var pv = v * parts[i][1], pd = parts[i][2];
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f0 * parts[i][0], t);
+      if (o.f1) osc.frequency.linearRampToValueAtTime(o.f1 * parts[i][0], t + pd);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(pv, t + a);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + pd);
+      osc.connect(g); g.connect(master);
+      osc.start(t); osc.stop(t + pd + 0.05);
+    }
   }
 
-  /* ---------- সাউন্ড তালিকা (সবই নরম, ছোট) ---------- */
+  /* ---------- সাউন্ড তালিকা (সবই খুব নরম, ছোট, শান্ত সুরের) ---------- */
   var SOUNDS = {
-    tick:    function () { tone(560, 0, 0.07, { vol: 0.10, f1: 520 }); tone(1120, 0, 0.05, { vol: 0.025 }); },
-    soft:    function () { tone(700, 0, 0.045, { vol: 0.055 }); },
-    on:      function () { tone(523.25, 0, 0.09, { vol: 0.08 }); tone(784, 0.07, 0.14, { vol: 0.08 }); },
-    pop:     function () { tone(330, 0, 0.12, { vol: 0.13, f1: 640 }); tone(990, 0.02, 0.06, { vol: 0.02 }); },
-    remove:  function () { tone(480, 0, 0.16, { vol: 0.10, f1: 210 }); },
-    prev:    function () { tone(500, 0, 0.08, { vol: 0.09, f1: 440 }); },
-    next:    function () { tone(560, 0, 0.08, { vol: 0.09, f1: 640 }); },
-    zin:     function () { tone(520, 0, 0.07, { vol: 0.08, f1: 620 }); },
-    zout:    function () { tone(620, 0, 0.07, { vol: 0.08, f1: 520 }); },
-    save:    function () { tone(659.25, 0, 0.16, { vol: 0.10 }); tone(880, 0.09, 0.26, { vol: 0.10 }); },
-    start:   function () { tone(392, 0, 0.18, { vol: 0.08, f1: 523 }); tone(523.25, 0.06, 0.22, { vol: 0.06 }); },
-    upload:  function () { tone(440, 0, 0.14, { vol: 0.09, f1: 587 }); tone(587.33, 0.10, 0.22, { vol: 0.08 }); },
+    tick:    function () { tone(523.25, 0, 0.16, { vol: 0.040 }); },
+    soft:    function () { tone(659.25, 0, 0.12, { vol: 0.022 }); },
+    on:      function () { tone(523.25, 0, 0.20, { vol: 0.040 }); tone(659.25, 0.10, 0.30, { vol: 0.040 }); },
+    pop:     function () { tone(587.33, 0, 0.26, { vol: 0.045 }); },
+    remove:  function () { tone(440, 0, 0.30, { vol: 0.040, f1: 392 }); },
+    prev:    function () { tone(493.88, 0, 0.16, { vol: 0.035 }); },
+    next:    function () { tone(587.33, 0, 0.16, { vol: 0.035 }); },
+    zin:     function () { tone(523.25, 0, 0.14, { vol: 0.030 }); },
+    zout:    function () { tone(440, 0, 0.14, { vol: 0.030 }); },
+    save:    function () { tone(523.25, 0, 0.30, { vol: 0.045 }); tone(659.25, 0.12, 0.45, { vol: 0.045 }); },
+    start:   function () { tone(392, 0, 0.30, { vol: 0.040 }); tone(523.25, 0.12, 0.40, { vol: 0.035 }); },
+    upload:  function () { tone(440, 0, 0.26, { vol: 0.040 }); tone(587.33, 0.12, 0.40, { vol: 0.038 }); },
     success: function () {
-      tone(523.25, 0.00, 0.30, { vol: 0.09 });
-      tone(659.25, 0.11, 0.30, { vol: 0.09 });
-      tone(783.99, 0.22, 0.34, { vol: 0.09 });
-      tone(1046.5, 0.33, 0.50, { vol: 0.07 });
+      tone(523.25, 0.00, 0.50, { vol: 0.040 });
+      tone(659.25, 0.16, 0.50, { vol: 0.040 });
+      tone(783.99, 0.32, 0.80, { vol: 0.038 });
     },
     error:   function () {
-      tone(330, 0, 0.20, { type: 'triangle', vol: 0.12, f1: 300 });
-      tone(247, 0.14, 0.32, { type: 'triangle', vol: 0.12, f1: 220 });
+      tone(349.23, 0, 0.40, { vol: 0.045 });
+      tone(293.66, 0.20, 0.55, { vol: 0.045 });
     },
     warn:    function () {
-      tone(392, 0, 0.14, { type: 'triangle', vol: 0.09 });
-      tone(392, 0.18, 0.20, { type: 'triangle', vol: 0.09 });
+      tone(392, 0, 0.26, { vol: 0.040 });
+      tone(392, 0.24, 0.36, { vol: 0.040 });
     }
   };
 
@@ -110,7 +117,7 @@
 
   function setLevel(n) {
     level = Math.max(0, Math.min(3, n | 0));
-    lsSet('ps_sfx_level', String(level));
+    lsSet('ps_sfx_level_v2', String(level));
     if (master) master.gain.value = LEVELS[level];
     updateControls();
   }
@@ -310,6 +317,151 @@
   }
   buildControls();
   setInterval(buildControls, 2000);   /* Streamlit রি-রেন্ডারে হারিয়ে গেলে ফিরিয়ে আনে */
+
+
+  /* =======================================================
+     ঘন কুয়াশা (fog) ব্যাকগ্রাউন্ড — canvas
+     • অনেকগুলো বড় নরম মেঘ ধীরে ভাসে
+     • আঙুল/মাউস নাড়ালে কাছের কুয়াশা সরে যায়, আর পিছনে হালকা কুয়াশার রেখা পড়ে
+     ======================================================= */
+  (function fogEngine() {
+    if (D.getElementById('ps-fog')) return;
+    var cv = D.createElement('canvas');
+    cv.id = 'ps-fog';
+    D.body.insertBefore(cv, D.body.firstChild);
+    var c = cv.getContext('2d');
+    if (!c) return;
+
+    var SC = 0.25;                          /* কম রেজোলিউশনে আঁকা: দ্রুত ও আরও ঝাপসা */
+    var w = 0, h = 0, phone = false;
+    var reduce = false;
+    try { reduce = W.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+
+    var COLS = [[94, 158, 139], [70, 112, 168], [120, 96, 170], [94, 158, 139], [86, 140, 170]];
+    var puffs = [], wisps = [];
+    var N = 16;
+
+    function rnd(a, b) { return a + Math.random() * (b - a); }
+
+    function build() {
+      puffs = [];
+      for (var i = 0; i < N; i++) {
+        puffs.push({
+          hx: rnd(0, 1), hy: rnd(0, 1),            /* ঘরের অবস্থান (0..1) */
+          ax: rnd(0.06, 0.16), ay: rnd(0.05, 0.14),/* ভেসে বেড়ানোর পরিসর */
+          sx: rnd(0.025, 0.06), sy: rnd(0.02, 0.05),/* গতি */
+          px: rnd(0, 6.28), py: rnd(0, 6.28),
+          r: rnd(0.28, 0.5),                       /* ব্যাসার্ধ (পর্দার বড় দিকের অনুপাতে) */
+          a: rnd(0.22, 0.36),                      /* ঘনত্ব */
+          col: COLS[i % COLS.length],
+          ox: 0, oy: 0, vx: 0, vy: 0               /* স্পর্শে সরে যাওয়া */
+        });
+      }
+    }
+
+    function resize() {
+      phone = (D.body.getAttribute('data-device-mode') === 'phone');
+      var sc = phone ? 0.2 : SC;
+      w = Math.max(60, Math.round(W.innerWidth * sc));
+      h = Math.max(60, Math.round(W.innerHeight * sc));
+      cv.width = w; cv.height = h;
+    }
+    resize(); build();
+    W.addEventListener('resize', resize);
+
+    /* ---- স্পর্শ / মাউস ---- */
+    var lastX = null, lastY = null;
+    function move(x, y) {
+      if (!ambOn) return;
+      var nx = x / W.innerWidth, ny = y / W.innerHeight;
+      if (lastX === null) { lastX = nx; lastY = ny; return; }
+      var dx = nx - lastX, dy = ny - lastY;
+      lastX = nx; lastY = ny;
+      var sp = Math.sqrt(dx * dx + dy * dy);
+      if (sp < 0.0005) return;
+      var asp = W.innerWidth / W.innerHeight;
+      var mx = Math.max(W.innerWidth, W.innerHeight);
+      for (var i = 0; i < puffs.length; i++) {
+        var p = puffs[i];
+        var cx = p.hx + p.ax * Math.sin(p.px) + p.ox;
+        var cy = p.hy + p.ay * Math.sin(p.py) + p.oy;
+        var ddx = (nx - cx) * asp, ddy = (ny - cy);
+        var d = Math.sqrt(ddx * ddx + ddy * ddy);
+        var reach = p.r * mx / W.innerHeight * 0.9;
+        if (d < reach) {
+          var k = (1 - d / reach);
+          p.vx += dx * k * 1.1 + (-ddx / (d + 0.05)) * k * sp * 0.25 / asp;
+          p.vy += dy * k * 1.1 + (-ddy / (d + 0.05)) * k * sp * 0.25;
+        }
+      }
+      /* আঙুলের পিছনে হালকা কুয়াশার রেখা */
+      if (wisps.length < 36) {
+        wisps.push({
+          x: nx, y: ny, vx: dx * 0.4, vy: dy * 0.4,
+          r: rnd(0.10, 0.18), life: 1,
+          col: COLS[(Math.random() * COLS.length) | 0]
+        });
+      }
+    }
+    function onPtr(e) { move(e.clientX, e.clientY); }
+    function onTouch(e) { var t = e.touches && e.touches[0]; if (t) move(t.clientX, t.clientY); }
+    function onEnd() { lastX = null; lastY = null; }
+    D.addEventListener('pointermove', onPtr, { passive: true, capture: true });
+    D.addEventListener('touchstart', function (e) { lastX = null; onTouch(e); }, { passive: true, capture: true });
+    D.addEventListener('touchmove', onTouch, { passive: true, capture: true });
+    D.addEventListener('touchend', onEnd, { passive: true, capture: true });
+    D.addEventListener('pointerleave', onEnd, true);
+
+    /* ---- আঁকা ---- */
+    function blob(x, y, r, col, a) {
+      var g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a + ')');
+      g.addColorStop(0.55, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (a * 0.45) + ')');
+      g.addColorStop(1, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+      c.fillStyle = g;
+      c.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+
+    var t0 = Date.now(), lastDraw = 0;
+    function frame(now) {
+      W.requestAnimationFrame(frame);
+      if (!ambOn || D.hidden) return;
+      var gap = phone ? 33 : 16;
+      if (now - lastDraw < gap) return;
+      lastDraw = now;
+
+      var t = reduce ? 0 : (Date.now() - t0) / 1000;
+      var mx = Math.max(w, h);
+      c.clearRect(0, 0, w, h);
+
+      var cnt = phone ? Math.min(11, puffs.length) : puffs.length;
+      for (var i = 0; i < cnt; i++) {
+        var p = puffs[i];
+        /* স্প্রিং: সরে গিয়ে ধীরে ফিরে আসে (নরম, দোলাহীন) */
+        p.vx += -p.ox * 0.0032; p.vy += -p.oy * 0.0032;
+        p.vx *= 0.955; p.vy *= 0.955;
+        p.ox += p.vx; p.oy += p.vy;
+        var lim = 0.35;
+        if (p.ox > lim) p.ox = lim; else if (p.ox < -lim) p.ox = -lim;
+        if (p.oy > lim) p.oy = lim; else if (p.oy < -lim) p.oy = -lim;
+
+        var x = (p.hx + p.ax * Math.sin(t * p.sx * 6.283 + p.px) + p.ox) * w;
+        var y = (p.hy + p.ay * Math.sin(t * p.sy * 6.283 + p.py) + p.oy) * h;
+        var br = 1 + 0.07 * Math.sin(t * 0.18 + p.px);          /* ধীরে "শ্বাস" */
+        blob(x, y, p.r * mx * br, p.col, p.a);
+      }
+
+      for (var j = wisps.length - 1; j >= 0; j--) {
+        var q = wisps[j];
+        q.x += q.vx; q.y += q.vy;
+        q.vx *= 0.97; q.vy *= 0.97;
+        q.life -= 0.010;
+        if (q.life <= 0) { wisps.splice(j, 1); continue; }
+        blob(q.x * w, q.y * h, q.r * mx * (1.4 - q.life * 0.4), q.col, 0.20 * q.life);
+      }
+    }
+    W.requestAnimationFrame(frame);
+  })();
 
   W.__psSfx = { play: play, setLevel: setLevel, sounds: Object.keys(SOUNDS) };
 })();
