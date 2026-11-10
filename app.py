@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-app.py — SMART SCANNER (Reinforcement Learning & Dynamic Knowledge-Base Edition)
+app.py — SMART SCANNER (PIN-Protected Learning & Blank-Gap Trimming Edition)
 ================================================================================
 AI INSTRUCTION MANUAL (যেকোনো এআই বটের জন্য নির্দেশনা):
-1. এই প্রোগ্রামের কোনো নিয়ম (প্রশ্ন ট্যাগ, সমাধান ট্যাগ, জলছাপ, একক, বা বৈধ প্রশ্নের শব্দ)
-   এই ফাইলে হার্ডকোড করা নেই। সব নিয়ম `knowledge_base.json` ফাইলে সংরক্ষিত আছে।
-2. নতুন কোনো পিডিএফে প্রশ্ন কাটতে সমস্যা হলে মূল কোড পরিবর্তন না করে `knowledge_base.json`
-   ফাইলের সংশ্লিষ্ট তালিকায় নতুন শব্দ বা প্যাটার্ন যোগ করুন।
-3. যদি কলামের মাপ বা স্থানাঙ্ক সংক্রান্ত শর্ত পরিবর্তন করতে হয়, তবে `knowledge_base.json`-এর
-   `layout_thresholds` অংশটি আপডেট করুন।
+1. এই প্রোগ্রামের সমস্ত নিয়ম `knowledge_base.json` ফাইলে সংরক্ষিত আছে।
+2. প্রশ্নের নিচে উত্তর লেখার জন্য রাখা ফাঁকা জায়গা (Blank Writing Space) বাদ দেওয়ার লজিক
+   `trim_vertical_whitespace()` ফাংশনে এবং `MAX_BLANK_GAP_PT` স্লাইডারে নিয়ন্ত্রিত হয়।
+3. গিটহাবে নতুন নিয়ম সেভ করার জন্য `ADMIN_PIN` দ্বারা নিরাপত্তা নিশ্চিত করা হয়েছে।
 ================================================================================
 """
 
@@ -33,6 +31,7 @@ from learning_engine import (
     load_knowledge_base,
     commit_rule_to_kb,
     analyze_user_corrections,
+    verify_admin_pin,
     KB_FILENAME
 )
 
@@ -53,7 +52,6 @@ load_external_css()
 
 # ==============================================================================
 # ৩. কেন্দ্রীয় নলেজ-বেস (knowledge_base.json) থেকে সব নিয়ম ও ট্যাগ লোড করা
-# AI NOTE: নতুন ট্যাগ যোগ করতে হলে knowledge_base.json আপডেট করুন।
 # ==============================================================================
 KB = load_knowledge_base()
 Q_TAGS = KB.get("question_tags", [])
@@ -70,6 +68,7 @@ MAX_Q_NUMBER = int(LAYOUT_CFG.get("max_question_number", 160))
 MIN_START_GAP_PT = float(LAYOUT_CFG.get("min_start_gap_pt", 16.0))
 MAX_Q_X_OFFSET = float(LAYOUT_CFG.get("max_q_x_offset", 52.0))
 MAX_SOL_X_OFFSET = float(LAYOUT_CFG.get("max_sol_x_offset", 120.0))
+DEFAULT_BLANK_GAP_PT = int(float(LAYOUT_CFG.get("max_internal_blank_gap_pt", 24.0)))
 
 def parse_box_selection_string(sel_str, max_count):
     sel_str = sel_str.strip()
@@ -89,7 +88,7 @@ def parse_box_selection_string(sel_str, max_count):
                 selected.add(idx - 1)
     return selected
 
-# ৪. মিনিমাল সাইডবার ও লাইভ ট্রেনিং প্যানেল
+# ৪. মিনিমাল সাইডবার ও পিন-সুরক্ষিত লাইভ ট্রেনিং প্যানেল
 with st.sidebar:
     st.markdown("""
     <div class="sb-brand">
@@ -115,6 +114,11 @@ with st.sidebar:
         QUESTION_GAP_PT = st.slider("গ্যাপ (pt)", 4, 40, 12, step=2)
         MIN_Q_HEIGHT_PT = st.slider("ন্যূনতম উচ্চতা", 10, 45, 16, step=2)
         RIGHT_EDGE_TRIM_PT = st.slider("ডান ছাঁটাই", 0, 35, 0, step=1)
+        MAX_BLANK_GAP_PT = st.slider(
+            "সর্বোচ্চ ভেতরের গ্যাপ",
+            12, 80, DEFAULT_BLANK_GAP_PT, step=2,
+            help="প্রশ্নের নিচে উত্তর লেখার জন্য বড় ফাঁকা জায়গা থাকলে এই মাপের পর বক্সটি স্বয়ংক্রিয়ভাবে কেটে যাবে।"
+        )
 
     with st.expander("ব্যাচ এডিট", expanded=False):
         BATCH_TARGET = st.selectbox(
@@ -138,30 +142,47 @@ with st.sidebar:
 
         APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
-    # (নতুন) লাইভ ট্রেনিং ও এক্স-রে ডায়াগনস্টিক প্যানেল
+    # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে ডায়াগনস্টিক প্যানেল
     with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
         XRAY_MODE = st.checkbox("এক্স-রে ডায়াগনস্টিক মোড", value=False, help="চালু থাকলে কোন লাইন কেন প্রশ্ন বা সমাধান হিসেবে চিহ্নিত হলো তার রিপোর্ট দেখাবে।")
-        RULE_CAT_LABELS = {
-            "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
-            "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
-            "জলছাপ/হেডার (Header Noise)": "header_noise_patterns",
-            "বুলেট চিহ্ন (Bullet Stop)": "bullet_stop_chars",
-            "বৈধ প্রশ্নের শব্দ (Valid Keyword)": "valid_crop_keywords"
-        }
-        sel_cat_label = st.selectbox("নতুন নিয়মের ধরন", list(RULE_CAT_LABELS.keys()))
-        manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা উদ্ভাস")
-        if st.button("গিটহাবে সেভ করুন", key="btn_manual_rule"):
-            if manual_rule_val.strip():
-                cat_key = RULE_CAT_LABELS[sel_cat_label]
-                val_to_save = re.escape(manual_rule_val.strip()) if cat_key == "header_noise_patterns" else manual_rule_val.strip()
-                ok, msg = commit_rule_to_kb(cat_key, val_to_save, "Manual rule added from Sidebar")
-                if ok:
-                    st.success(msg)
+
+        if not st.session_state.get("is_admin_unlocked", False):
+            st.caption("🔒 গিটহাবে নতুন নিয়ম সেভ করতে অ্যাডমিন পিন দিন:")
+            pin_in = st.text_input("অ্যাডমিন পিন", type="password", placeholder="পিন নম্বর লিখুন", key="sb_pin_input", label_visibility="collapsed")
+            if st.button("আনলক করুন", key="btn_unlock_admin"):
+                if verify_admin_pin(pin_in):
+                    st.session_state["is_admin_unlocked"] = True
+                    st.success("অ্যাডমিন মোড আনলক হয়েছে!")
                     st.rerun()
                 else:
-                    st.warning(msg)
-            else:
-                st.warning("অনুগ্রহ করে একটি শব্দ লিখুন।")
+                    st.error("ভুল পিন! আবার চেষ্টা করুন।")
+        else:
+            st.caption("🔓 **অ্যাডমিন মোড সচল** (গিটহাব অটো-সেভ চালু)")
+            RULE_CAT_LABELS = {
+                "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
+                "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
+                "জলছাপ/হেডার (Header Noise)": "header_noise_patterns",
+                "বুলেট চিহ্ন (Bullet Stop)": "bullet_stop_chars",
+                "বৈধ প্রশ্নের শব্দ (Valid Keyword)": "valid_crop_keywords"
+            }
+            sel_cat_label = st.selectbox("নতুন নিয়মের ধরন", list(RULE_CAT_LABELS.keys()))
+            manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা উদ্ভাস")
+            if st.button("গিটহাবে সেভ করুন", key="btn_manual_rule"):
+                if manual_rule_val.strip():
+                    cat_key = RULE_CAT_LABELS[sel_cat_label]
+                    val_to_save = re.escape(manual_rule_val.strip()) if cat_key == "header_noise_patterns" else manual_rule_val.strip()
+                    ok, msg = commit_rule_to_kb(cat_key, val_to_save, "Manual rule added from Sidebar")
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+                else:
+                    st.warning("অনুগ্রহ করে একটি শব্দ লিখুন।")
+
+            if st.button("লক করুন", key="btn_lock_admin"):
+                st.session_state["is_admin_unlocked"] = False
+                st.rerun()
 
         st.download_button(
             label="রুলস ব্যাকআপ (JSON)",
@@ -190,8 +211,6 @@ with st.sidebar:
 
 # ==============================================================================
 # ৫. ডায়নামিক রেগুলার এক্সপ্রেশন ইঞ্জিন (knowledge_base.json থেকে চালিত)
-# AI INSTRUCTION: যদি কোনো প্রশ্ন বা সমাধান শনাক্ত না হয়, তবে নিচের রেগুলার এক্সপ্রেশন
-# সরাসরি পরিবর্তন না করে knowledge_base.json-এ নতুন ট্যাগ বা শব্দ যোগ করুন।
 # ==============================================================================
 SC = 2.5
 
@@ -292,7 +311,7 @@ def line_has_solution_marker(line, joined_text, max_sol_x):
     return False, None
 
 # ==============================================================================
-# ৬. ইমেজ প্রসেসিং ও বাঁকা বিভাজক রেখা বিশ্লেষণ
+# ৬. ইমেজ প্রসেসিং, বাঁকা বিভাজক রেখা ও স্মার্ট ব্ল্যাঙ্ক-গ্যাপ ছাঁটাই
 # ==============================================================================
 def parse_page_range(range_str, total_pages):
     range_str = range_str.strip()
@@ -421,17 +440,47 @@ def snap_cut_line(ink, xr, y_target, up_win=2.5, down_win=1.0):
     best_row = int(np.argmin(prof))
     return (a + best_row) / SC
 
-def trim_vertical_whitespace(ink, xr, top, bot):
+def trim_vertical_whitespace(ink, xr, top, bot, max_gap_pt=None):
+    """
+    প্রশ্নের উপরের ও নিচের সাদা অংশ ছাঁটাই করে।
+    যদি প্রশ্নের নিচে উত্তর লেখার জন্য বড় ফাঁকা জায়গা (max_gap_pt এর বেশি) থাকে,
+    তবে খাড়া বর্ডার বা টানা দাগ উপেক্ষা করে ঠিক লেখার নিচেই বক্স থামিয়ে দেয়।
+    """
+    if max_gap_pt is None:
+        max_gap_pt = float(MAX_BLANK_GAP_PT)
+
     h_px, w_px = ink.shape
-    x0, x1 = max(0, int(xr[0] * SC)), min(w_px, int((xr[1] - 8.0) * SC))
+    x0 = max(0, int((xr[0] + 5.0) * SC))
+    x1 = min(w_px, int((xr[1] - 9.0) * SC))
     y0, y1 = max(0, int(top * SC)), min(h_px, int(bot * SC))
     if y1 <= y0 or x1 <= x0:
         return top, bot
-    row_ink = ink[y0:y1, x0:x1].mean(axis=1) > 0.001
+
+    roi = ink[y0:y1, x0:x1].astype(np.uint8)
+    # পাশের খাড়া মার্জিন বা বক্সের বর্ডার মুছে ফেলা
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(14, int(18 * SC))))
+    v_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, v_kernel)
+    # উত্তর লেখার জন্য টানা লম্বা অনুভূমিক দাগ থাকলে তা উপেক্ষা করা
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, int((x1 - x0) * 0.48)), 1))
+    h_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, h_kernel)
+    clean_roi = roi & (~v_lines) & (~h_lines)
+
+    row_ink = clean_roi.mean(axis=1) > 0.003
     nz = np.where(row_ink)[0]
     if len(nz) == 0:
         return top, bot
-    return max(top, (y0 + nz[0]) / SC - 3.5), min(bot, (y0 + nz[-1]) / SC + 5.0)
+
+    first_row = nz[0]
+    last_row = nz[0]
+    max_gap_px = int(float(max_gap_pt) * SC)
+    min_q_px = int(10.0 * SC)
+
+    for r_idx in nz[1:]:
+        if (r_idx - last_row) > max_gap_px and (last_row - first_row) >= min_q_px:
+            break
+        last_row = r_idx
+
+    return max(top, (y0 + first_row) / SC - 3.5), min(bot, (y0 + last_row) / SC + 5.0)
 
 # ==============================================================================
 # ৭. ৩-পাস শক্তিশালী OCR ইঞ্জিন ও মার্কার বিশ্লেষণ
@@ -658,7 +707,7 @@ def is_valid_question_crop(lines_in_crop):
     return True
 
 # ==============================================================================
-# ৮. স্লাইড মোড: বক্সে ঘেরা প্রশ্ন শনাক্ত ও Sol^n ছাঁটাই
+# ৮. স্লাইড মোড: বক্সে ঘেরা প্রশ্ন শনাক্ত, Sol^n ও ফাঁকা জায়গা ছাঁটাই
 # ==============================================================================
 def is_slide_page(W, H):
     if PAGE_MODE == "বই":
@@ -695,6 +744,7 @@ def box_has_question_number(page, gray, rect):
         return False
 
 def trim_solution_inside_slide_box(page, gray, ink, rect):
+    cur_rect = rect
     try:
         x0_px, y0_px = max(0, int(rect.x0 * SC)), max(0, int(rect.y0 * SC))
         x1_px, y1_px = min(gray.shape[1], int(rect.x1 * SC)), min(gray.shape[0], int(rect.y1 * SC))
@@ -719,10 +769,25 @@ def trim_solution_inside_slide_box(page, gray, ink, rect):
             has_s, sy = line_has_solution_marker(ln, joined, rect.x0 + (rect.width * 0.55))
             if has_s and sy is not None and (sy - rect.y0) >= 18.0:
                 new_bot = snap_cut_line(ink, (rect.x0 + 4, rect.x1 - 4), sy - 1.5, up_win=2.5, down_win=0.5)
-                return fitz.Rect(rect.x0, rect.y0, rect.x1, max(rect.y0 + 18.0, new_bot))
+                cur_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, max(rect.y0 + 18.0, new_bot))
+                break
     except Exception:
         pass
-    return rect
+
+    # বক্সের ভেতরে নিচে উত্তর লেখার ফাঁকা জায়গা থাকলে তা ছাঁটাই করা
+    try:
+        _, trimmed_bot = trim_vertical_whitespace(
+            ink,
+            (cur_rect.x0 + 6.0, cur_rect.x1 - 6.0),
+            cur_rect.y0 + 4.0,
+            cur_rect.y1 - 4.0,
+            MAX_BLANK_GAP_PT
+        )
+        if trimmed_bot + 4.0 < cur_rect.y1 and (trimmed_bot - cur_rect.y0) >= 18.0:
+            cur_rect = fitz.Rect(cur_rect.x0, cur_rect.y0, cur_rect.x1, trimmed_bot + 2.0)
+    except Exception:
+        pass
+    return cur_rect
 
 def detect_boxed_questions(page, gray, ink, W, H):
     k = int(110 * SC)
@@ -892,7 +957,7 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
 
                 top = snap_cut_line(ink, (q_x0, q_x1), st_y, up_win=3.0, down_win=1.0)
                 bot = snap_cut_line(ink, (q_x0, q_x1), end_y, up_win=1.8, down_win=0.8)
-                top, bot = trim_vertical_whitespace(ink, (q_x0, q_x1), top, bot)
+                top, bot = trim_vertical_whitespace(ink, (q_x0, q_x1), top, bot, MAX_BLANK_GAP_PT)
 
                 if bot - top >= float(MIN_Q_HEIGHT_PT) and q_x1 - q_x0 >= 75.0:
                     box_ink = ink[int(top * SC):int(bot * SC), int(q_x0 * SC):int(q_x1 * SC)]
@@ -965,7 +1030,7 @@ def build_practice_pdf(src_doc, questions):
 
 
 # ==============================================================================
-# ৯.৯ বাহ্যিক canvas_editor.html লোডার, বক্স সিঙ্ক ও রিইনফোর্সমেন্ট লার্নিং ইঞ্জিন
+# ৯.৯ বাহ্যিক canvas_editor.html লোডার, বক্স সিঙ্ক ও পিন-সুরক্ষিত লার্নিং কার্ড
 # ==============================================================================
 def questions_to_rows(questions):
     rows = []
@@ -1105,28 +1170,44 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
 def render_learning_suggestions():
-    """বক্স এডিটরের সংশোধন থেকে পাওয়া নতুন প্যাটার্নগুলো সেভ করার ইন্টারঅ্যাক্টিভ কার্ড।"""
+    """বক্স এডিটরের সংশোধন থেকে পাওয়া নতুন প্যাটার্নগুলো পিন যাচাইয়ের মাধ্যমে গিটহাবে সেভ করার কার্ড।"""
     suggestions = st.session_state.get("rv_suggestions", [])
     if not suggestions:
         return
 
+    is_unlocked = st.session_state.get("is_admin_unlocked", False)
+
     for idx, sug in enumerate(list(suggestions)):
         st.info(f"🧠 **নতুন প্যাটার্ন শনাক্ত:** {sug['prompt']}\n\n*(নমুনা লাইন: `{sug.get('sample', '')}`)*")
+
+        pin_val = ""
+        if not is_unlocked:
+            pin_val = st.text_input(
+                "গিটহাবে সেভ করতে অ্যাডমিন পিন দিন",
+                type="password",
+                placeholder="অ্যাডমিন পিন লিখুন...",
+                key=f"sug_pin_{idx}_{sug['pattern']}"
+            )
+
         c1, c2 = st.columns(2)
         with c1:
             if st.button("✅ হ্যাঁ, গিটহাবে সেভ করুন", key=f"sug_yes_{idx}_{sug['pattern']}"):
-                ok, msg = commit_rule_to_kb(
-                    sug["type"],
-                    sug["pattern"],
-                    f"Learned {sug['type']} from user box edit on page {sug['page']}"
-                )
-                suggestions.pop(idx)
-                st.session_state["rv_suggestions"] = suggestions
-                if ok:
-                    st.success(msg)
+                if is_unlocked or verify_admin_pin(pin_val):
+                    st.session_state["is_admin_unlocked"] = True
+                    ok, msg = commit_rule_to_kb(
+                        sug["type"],
+                        sug["pattern"],
+                        f"Learned {sug['type']} from user box edit on page {sug['page']}"
+                    )
+                    suggestions.pop(idx)
+                    st.session_state["rv_suggestions"] = suggestions
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.warning(msg)
+                    st.rerun()
                 else:
-                    st.warning(msg)
-                st.rerun()
+                    st.error("ভুল অ্যাডমিন পিন! সঠিক পিন ছাড়া গিটহাবে সেভ করা যাবে না।")
         with c2:
             if st.button("❌ বাদ দিন", key=f"sug_no_{idx}_{sug['pattern']}"):
                 suggestions.pop(idx)
@@ -1151,7 +1232,6 @@ def render_results_and_review(raw_pdf, file_key):
             new_boxes = payload.get("boxes", [])
             new_df = pd.DataFrame(new_boxes, columns=["keep", "page", "x0", "y0", "x1", "y1"])
 
-            # ব্যবহারকারীর সংশোধন বিশ্লেষণ করে নতুন নিয়ম শেখা (Feedback Loop)
             learned = analyze_user_corrections(raw_pdf, old_df, new_df)
             if learned:
                 cur_sugs = st.session_state.get("rv_suggestions", [])
@@ -1173,7 +1253,6 @@ def render_results_and_review(raw_pdf, file_key):
         except Exception as e:
             st.error(f"ত্রুটি: {e}")
 
-    # বক্স এডিটর থেকে শেখা নতুন প্যাটার্নের নোটিফিকেশন প্রদর্শন
     render_learning_suggestions()
 
     rows_df = st.session_state["rv_rows"]
@@ -1204,7 +1283,6 @@ def render_results_and_review(raw_pdf, file_key):
             key=f"dl_top_{ver}_{active_count}"
         )
 
-    # এক্স-রে ডায়াগনস্টিক মোড চালু থাকলে বিস্তারিত রিপোর্ট দেখানো
     if XRAY_MODE and st.session_state.get("rv_xray_logs"):
         with st.expander("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট (কোন লাইন কেন গৃহীত বা বাতিল হলো)", expanded=False):
             st.dataframe(pd.DataFrame(st.session_state["rv_xray_logs"]), use_container_width=True)
