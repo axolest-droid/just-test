@@ -1,7 +1,7 @@
 /* =========================================================
    ambient.css  —  ঘন কুয়াশা (fog) ব্যাকগ্রাউন্ড + ছোট কন্ট্রোল বাটন
    (নতুন ফাইল: style.css বা app.py এর কোনো পুরোনো লাইন বদলায়নি)
-   বন্ধ করতে: নিচের বাম কোণের "ব্যাকগ্রাউন্ড" বাটন, বা এই ফাইলটি মুছে দিন।
+   কুয়াশা সবসময় চালু; বন্ধ করতে চাইলে এই ফাইলটি মুছে দিন।
    ========================================================= */
 
 :root {
@@ -13,15 +13,19 @@
 /* ---------- ঘন কুয়াশা (fog) ----------
    কুয়াশা আঁকে sfx.js-এর <canvas id="ps-fog">।
    canvas থাকে সবার পিছনে; তাই অ্যাপের ব্যাকগ্রাউন্ড স্বচ্ছ করা হয়েছে
-   আর গাঢ় রঙটি বসানো হয়েছে html/body-তে (রঙ একই: #0B0E14)। */
-html, body {
+   আর গাঢ় রঙটি বসানো হয়েছে শুধু html-এ (রঙ একই: #0B0E14)। */
+/* গুরুত্বপূর্ণ: গাঢ় রঙ শুধু html-এ। body-তে রঙ থাকলে সেটা canvas-এর উপরে এসে কুয়াশা ঢেকে দেয় */
+html {
     background-color: #0B0E14 !important;
 }
+body,
+#root,
 .stApp,
 [data-testid="stAppViewContainer"],
 [data-testid="stMain"],
 [data-testid="stHeader"] {
     background: transparent !important;
+    background-color: transparent !important;
 }
 
 #ps-fog {
@@ -31,13 +35,8 @@ html, body {
     height: 100vh;
     z-index: -1;
     pointer-events: none;
-    filter: blur(14px);          /* ছোট রেজোলিউশন + ব্লার = মসৃণ ঘন কুয়াশা */
+    filter: blur(26px);          /* ছোট রেজোলিউশন + ব্লার = মসৃণ ঘন কুয়াশা */
     transform: scale(1.06);      /* ব্লারের ধারের ফাঁক ঢাকতে */
-}
-
-/* হাতে বন্ধ করলে */
-body.ps-ambient-off #ps-fog {
-    display: none;
 }
 
 /* ---------- নিচের বাম কোণের ছোট কন্ট্রোল (ডিভাইস-মোড বাটনের পাশে) ---------- */
@@ -78,4 +77,3 @@ body.ps-ambient-off #ps-fog {
     border-color: rgba(255, 255, 255, 0.10);
 }
 #ps-sfx-ctl { left: 60px; }
-#ps-amb-ctl { left: 104px; }
