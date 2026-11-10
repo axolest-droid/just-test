@@ -393,10 +393,10 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                             })
                             existing_s.add(first_tok.lower())
 
-        # কেস ৩: পুরোনো বক্স পুরোপুরি ডিলিট করা হয়েছে (জলছাপ বা হেডার নয়েজ ছিল)
+       # কেস ৩: পুরোনো বক্স পুরোপুরি ডিলিট করা হয়েছে (জলছাপ বা হেডার নয়েজ ছিল)
         for i, or_rect in enumerate(olds):
             if i not in matched_old:
-                 any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for nr in news)
+                any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for nr in news)
                 if not any_overlap:
                     lines = _extract_lines_from_clip(page, or_rect)
                     if lines and len(lines) <= 2:
