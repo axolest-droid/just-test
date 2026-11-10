@@ -1,5 +1,5 @@
 /* =========================================================
-   ambient.css  —  নরম ঝাপসা চলমান ব্যাকগ্রাউন্ড + ছোট কন্ট্রোল বাটন
+   ambient.css  —  ঘন কুয়াশা (fog) ব্যাকগ্রাউন্ড + ছোট কন্ট্রোল বাটন
    (নতুন ফাইল: style.css বা app.py এর কোনো পুরোনো লাইন বদলায়নি)
    বন্ধ করতে: নিচের বাম কোণের "ব্যাকগ্রাউন্ড" বাটন, বা এই ফাইলটি মুছে দিন।
    ========================================================= */
@@ -10,67 +10,33 @@
     --amb-c: 120, 96, 170;    /* হালকা বেগুনি */
 }
 
-/* .stApp কে আলাদা stacking context বানানো, যাতে ব্লবগুলো
-   ব্যাকগ্রাউন্ডের ঠিক উপরে কিন্তু কনটেন্টের নিচে থাকে */
-.stApp {
-    isolation: isolate;
+/* ---------- ঘন কুয়াশা (fog) ----------
+   কুয়াশা আঁকে sfx.js-এর <canvas id="ps-fog">।
+   canvas থাকে সবার পিছনে; তাই অ্যাপের ব্যাকগ্রাউন্ড স্বচ্ছ করা হয়েছে
+   আর গাঢ় রঙটি বসানো হয়েছে html/body-তে (রঙ একই: #0B0E14)। */
+html, body {
+    background-color: #0B0E14 !important;
+}
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stHeader"] {
+    background: transparent !important;
 }
 
-.stApp::before,
-.stApp::after {
-    content: "";
+#ps-fog {
     position: fixed;
-    inset: -25%;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
     z-index: -1;
     pointer-events: none;
-    will-change: transform;
-}
-
-.stApp::before {
-    background:
-        radial-gradient(38% 38% at 22% 28%, rgba(var(--amb-a), 0.17), transparent 70%),
-        radial-gradient(32% 32% at 78% 72%, rgba(var(--amb-b), 0.13), transparent 70%);
-    animation: psAmbDriftA 42s ease-in-out infinite alternate;
-}
-
-.stApp::after {
-    background:
-        radial-gradient(34% 34% at 72% 24%, rgba(var(--amb-c), 0.10), transparent 70%),
-        radial-gradient(40% 40% at 30% 80%, rgba(var(--amb-a), 0.11), transparent 70%);
-    animation: psAmbDriftB 58s ease-in-out infinite alternate;
-}
-
-@keyframes psAmbDriftA {
-    0%   { transform: translate3d(-3%, -2%, 0) scale(1); }
-    50%  { transform: translate3d(4%, 3%, 0) scale(1.08); }
-    100% { transform: translate3d(-2%, 5%, 0) scale(1.03); }
-}
-
-@keyframes psAmbDriftB {
-    0%   { transform: translate3d(3%, 4%, 0) scale(1.05); }
-    50%  { transform: translate3d(-4%, -2%, 0) scale(1); }
-    100% { transform: translate3d(2%, -4%, 0) scale(1.09); }
-}
-
-/* ফোন মোডে হালকা: একটি স্তর, ধীর গতি (ব্যাটারি ও ল্যাগ বাঁচাতে) */
-body[data-device-mode="phone"] .stApp::after {
-    display: none;
-}
-body[data-device-mode="phone"] .stApp::before {
-    animation-duration: 70s;
-}
-
-/* ব্যবহারকারী সিস্টেমে "reduce motion" চালু রাখলে নড়াচড়া বন্ধ */
-@media (prefers-reduced-motion: reduce) {
-    .stApp::before,
-    .stApp::after {
-        animation: none;
-    }
+    filter: blur(14px);          /* ছোট রেজোলিউশন + ব্লার = মসৃণ ঘন কুয়াশা */
+    transform: scale(1.06);      /* ব্লারের ধারের ফাঁক ঢাকতে */
 }
 
 /* হাতে বন্ধ করলে */
-body.ps-ambient-off .stApp::before,
-body.ps-ambient-off .stApp::after {
+body.ps-ambient-off #ps-fog {
     display: none;
 }
 
