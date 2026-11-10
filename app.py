@@ -1,3 +1,18 @@
+# -*- coding: utf-8 -*-
+"""
+================================================================================
+app.py — SMART SCANNER (Reinforcement Learning & Dynamic Knowledge-Base Edition)
+================================================================================
+AI INSTRUCTION MANUAL (যেকোনো এআই বটের জন্য নির্দেশনা):
+1. এই প্রোগ্রামের কোনো নিয়ম (প্রশ্ন ট্যাগ, সমাধান ট্যাগ, জলছাপ, একক, বা বৈধ প্রশ্নের শব্দ)
+   এই ফাইলে হার্ডকোড করা নেই। সব নিয়ম `knowledge_base.json` ফাইলে সংরক্ষিত আছে।
+2. নতুন কোনো পিডিএফে প্রশ্ন কাটতে সমস্যা হলে মূল কোড পরিবর্তন না করে `knowledge_base.json`
+   ফাইলের সংশ্লিষ্ট তালিকায় নতুন শব্দ বা প্যাটার্ন যোগ করুন।
+3. যদি কলামের মাপ বা স্থানাঙ্ক সংক্রান্ত শর্ত পরিবর্তন করতে হয়, তবে `knowledge_base.json`-এর
+   `layout_thresholds` অংশটি আপডেট করুন।
+================================================================================
+"""
+
 import os
 import re
 import json
@@ -8,10 +23,18 @@ import numpy as np
 import pandas as pd
 import pytesseract
 import streamlit as st
+
 try:
     import streamlit.components.v1 as components
 except Exception:
     components = None
+
+from learning_engine import (
+    load_knowledge_base,
+    commit_rule_to_kb,
+    analyze_user_corrections,
+    KB_FILENAME
+)
 
 # ১. পেজ কনফিগারেশন
 st.set_page_config(
@@ -28,32 +51,25 @@ def load_external_css(css_file="style.css"):
 
 load_external_css()
 
-# ৩. ট্যাগ ফাইল লোড (question_tags.txt ও solution_tags.txt)
-DEFAULT_Q_TAGS = [
-    "Q", "Question", "Ques", "Prob", "Problem", "Ex", "Example",
-    "প্রশ্ন", "এমসিকিউ", "সমস্যা", "উদাহরণ", "❑", "▫", "▪", "■", "□"
-]
-DEFAULT_SOL_TAGS = [
-    "Sol", "Soln", "Solⁿ", "Sol^n", "So1", "So1n", "S0l", "S0ln", "5ol", "5oln",
-    "Solution", "Ans", "Answer", "Shortcut", "Hint", "Hints", "Note", "[Note", "[Note:",
-    "উত্তর", "উত্ত", "উওর", "উত্তব", "উত্তন", "উত্তম", "ডত্তর", "ডওর", "ডত্তব", "ত্তর", "ত্তব", "উঃ", "উ:", "ত্তঃ", "ত্ত:",
-    "সমাধান", "সমাধা", "মাধান", "সলভ", "সল্‌ভ",
-    "ব্যাখ্যা", "ব্যখ্যা", "ব্যাখা", "ব্যখা", "্যাখ্যা", "াখ্যা", "রাখ্যা", "য্যাখ্যা", "বাখ্যা", "ব্যাখ",
-    "বিকল্প", "িকল্প", "শর্টকাট",
-    "প্র্যাকটিস প্রবলেম", "প্র্যাকটিস", "প্রশ্ন-সলভ", "প্রশ্ন-সল্‌ভ",
-    "Written", "লিখিত", "বিগত ভর্তি", "DËi", "mgvavb", "e¨vL¨v"
-]
+# ==============================================================================
+# ৩. কেন্দ্রীয় নলেজ-বেস (knowledge_base.json) থেকে সব নিয়ম ও ট্যাগ লোড করা
+# AI NOTE: নতুন ট্যাগ যোগ করতে হলে knowledge_base.json আপডেট করুন।
+# ==============================================================================
+KB = load_knowledge_base()
+Q_TAGS = KB.get("question_tags", [])
+SOL_TAGS = KB.get("solution_tags", [])
+HEADER_NOISE_LIST = KB.get("header_noise_patterns", [])
+BULLET_STOP_LIST = KB.get("bullet_stop_chars", ["➢", "➤", "➣", "•", "♦", "►"])
+OPTION_UNITS_LIST = KB.get("option_units", ["mol", "L", "g", "kg", "mL", "ml", "cm", "mm", "m", "gm", "sec", "min", "s", "×", "x", "10^"])
+DOTLESS_KW_LIST = KB.get("dotless_question_keywords", [])
+VALID_CROP_KW_LIST = KB.get("valid_crop_keywords", [])
+EQ_GUARD_KW_LIST = KB.get("equation_question_guard_words", [])
+LAYOUT_CFG = KB.get("layout_thresholds", {})
 
-def load_tag_file(filename, defaults):
-    loaded = []
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            loaded = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
-    combined = list(dict.fromkeys(loaded + defaults))
-    return combined if combined else defaults
-
-Q_TAGS = load_tag_file("question_tags.txt", DEFAULT_Q_TAGS)
-SOL_TAGS = load_tag_file("solution_tags.txt", DEFAULT_SOL_TAGS)
+MAX_Q_NUMBER = int(LAYOUT_CFG.get("max_question_number", 160))
+MIN_START_GAP_PT = float(LAYOUT_CFG.get("min_start_gap_pt", 16.0))
+MAX_Q_X_OFFSET = float(LAYOUT_CFG.get("max_q_x_offset", 52.0))
+MAX_SOL_X_OFFSET = float(LAYOUT_CFG.get("max_sol_x_offset", 120.0))
 
 def parse_box_selection_string(sel_str, max_count):
     sel_str = sel_str.strip()
@@ -73,7 +89,7 @@ def parse_box_selection_string(sel_str, max_count):
                 selected.add(idx - 1)
     return selected
 
-# ৪. মিনিমাল সাইডবার
+# ৪. মিনিমাল সাইডবার ও লাইভ ট্রেনিং প্যানেল
 with st.sidebar:
     st.markdown("""
     <div class="sb-brand">
@@ -122,6 +138,39 @@ with st.sidebar:
 
         APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
+    # (নতুন) লাইভ ট্রেনিং ও এক্স-রে ডায়াগনস্টিক প্যানেল
+    with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
+        XRAY_MODE = st.checkbox("এক্স-রে ডায়াগনস্টিক মোড", value=False, help="চালু থাকলে কোন লাইন কেন প্রশ্ন বা সমাধান হিসেবে চিহ্নিত হলো তার রিপোর্ট দেখাবে।")
+        RULE_CAT_LABELS = {
+            "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
+            "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
+            "জলছাপ/হেডার (Header Noise)": "header_noise_patterns",
+            "বুলেট চিহ্ন (Bullet Stop)": "bullet_stop_chars",
+            "বৈধ প্রশ্নের শব্দ (Valid Keyword)": "valid_crop_keywords"
+        }
+        sel_cat_label = st.selectbox("নতুন নিয়মের ধরন", list(RULE_CAT_LABELS.keys()))
+        manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা উদ্ভাস")
+        if st.button("গিটহাবে সেভ করুন", key="btn_manual_rule"):
+            if manual_rule_val.strip():
+                cat_key = RULE_CAT_LABELS[sel_cat_label]
+                val_to_save = re.escape(manual_rule_val.strip()) if cat_key == "header_noise_patterns" else manual_rule_val.strip()
+                ok, msg = commit_rule_to_kb(cat_key, val_to_save, "Manual rule added from Sidebar")
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.warning(msg)
+            else:
+                st.warning("অনুগ্রহ করে একটি শব্দ লিখুন।")
+
+        st.download_button(
+            label="রুলস ব্যাকআপ (JSON)",
+            data=json.dumps(KB, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=KB_FILENAME,
+            mime="application/json",
+            key="dl_kb_backup"
+        )
+
     mode_short = "AUTO" if PAGE_MODE == "অটো" else ("BOOK" if PAGE_MODE == "বই" else "SLIDE")
     range_short = PAGE_RANGE_TEXT.strip() if PAGE_RANGE_TEXT.strip() else "ALL"
 
@@ -133,7 +182,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # (নতুন) ⓘ অ্যাপ সম্পর্কে — লেখা বদলাতে info_panel.py দেখুন। সরাতে এই ব্লকটি মুছুন।
     try:
         from info_panel import render_info_panel
         render_info_panel()
@@ -141,12 +189,20 @@ with st.sidebar:
         pass
 
 # ==============================================================================
-# ৫. শক্তিশালী Sol^n ও সমাধান শনাক্তকরণ রেগুলার এক্সপ্রেশন
+# ৫. ডায়নামিক রেগুলার এক্সপ্রেশন ইঞ্জিন (knowledge_base.json থেকে চালিত)
+# AI INSTRUCTION: যদি কোনো প্রশ্ন বা সমাধান শনাক্ত না হয়, তবে নিচের রেগুলার এক্সপ্রেশন
+# সরাসরি পরিবর্তন না করে knowledge_base.json-এ নতুন ট্যাগ বা শব্দ যোগ করুন।
 # ==============================================================================
 SC = 2.5
 
-q_prefix_pattern = "|".join(re.escape(t) for t in sorted(Q_TAGS, key=len, reverse=True))
-sol_prefix_pattern = "|".join(re.escape(t) for t in sorted(SOL_TAGS, key=len, reverse=True))
+q_prefix_pattern = "|".join(re.escape(t) for t in sorted(Q_TAGS, key=len, reverse=True)) if Q_TAGS else "Q|প্রশ্ন"
+sol_prefix_pattern = "|".join(re.escape(t) for t in sorted(SOL_TAGS, key=len, reverse=True)) if SOL_TAGS else "Sol|সমাধান|উত্তর"
+bullet_chars_escaped = "".join(re.escape(c) for c in BULLET_STOP_LIST)
+unit_pattern = "|".join(re.escape(u) for u in sorted(OPTION_UNITS_LIST, key=len, reverse=True))
+dotless_kw_pattern = "|".join(re.escape(w) for w in DOTLESS_KW_LIST) if DOTLESS_KW_LIST else "কত|কোনটি"
+valid_crop_kw_pattern = "|".join(re.escape(w) for w in VALID_CROP_KW_LIST) if VALID_CROP_KW_LIST else "কত|কোনটি"
+eq_guard_kw_pattern = "|".join(re.escape(w) for w in EQ_GUARD_KW_LIST) if EQ_GUARD_KW_LIST else "কত|কোনটি|হলে|যদি"
+noise_pattern_str = "|".join(HEADER_NOISE_LIST) if HEADER_NOISE_LIST else "Educationalpdf"
 
 NUM_RE = re.compile(
     rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-]?\s*)?([0-9০-৯]{{1,3}})[\.\)\]\:](?![0-9০-৯])",
@@ -154,21 +210,17 @@ NUM_RE = re.compile(
 )
 PURE_PREFIX_RE = re.compile(rf"^(?:{q_prefix_pattern})[\.\:\-]?\s*[0-9০-৯]*$", re.IGNORECASE)
 OPT_TOKEN_RE = re.compile(r"^(?:[\(\[]?[a-dA-Dক-ঘ][\)\]\.]|[ⓐⓑⓒⓓⓔ①②③④])$")
-BULLET_STOP_RE = re.compile(r"^[➢➤➣•♦►]\s*")
-OPT_UNIT_RE = re.compile(r"^(?:mol|L|g|kg|mL|ml|cm|mm|m|gm|sec|min|s|×|x|10\^?)$", re.IGNORECASE)
+BULLET_STOP_RE = re.compile(rf"^[{bullet_chars_escaped}]\s*")
+OPT_UNIT_RE = re.compile(rf"^(?:{unit_pattern}|10\^?)$", re.IGNORECASE)
 
 SOL_WORD_CORE = (
     r"(?:[sS58\$][oO0aAeE][lL1Ii\|!t](?:[nNmMrRuU23\^\°\*\~\"\'\`\’\”\ⁿ\-\_]+)?|"
     r"solution|ans(?:wer)?|shortcut|hints?|note|"
-    r"উত্তর|উত্ত|উওর|উত্তব|উত্তন|উত্তম|ডত্তর|ডওর|ডত্তব|ত্তর|ত্তব|উঃ|উ:|ত্তঃ|ত্ত:|"
-    r"সমাধান|সমাধা|মাধান|সলভ|সল্‌ভ|"
-    r"ব্যাখ্যা|ব্যখ্যা|ব্যাখা|ব্যখা|্যাখ্যা|াখ্যা|রাখ্যা|য্যাখ্যা|বাখ্যা|ব্যাখ|"
-    r"বিকল্প|িকল্প|শর্টকাট|"
     rf"{sol_prefix_pattern})"
 )
 
 SOL_TOKEN_RE = re.compile(
-    rf"^[\(\[\{{•\*➢➤➣♦►\-\—\–\.\:\;\,\'\"\`\~\|]*{SOL_WORD_CORE}(?:$|[\s\:\ঃ\.\;\,\-\—\–\(\[\{{\"'\`\’\”\ⁿ\^\°\*\/\|0-9০-৯])",
+    rf"^[\(\[\{{•\*{bullet_chars_escaped}\-\—\–\.\:\;\,\'\"\`\~\|]*{SOL_WORD_CORE}(?:$|[\s\:\ঃ\.\;\,\-\—\–\(\[\{{\"'\`\’\”\ⁿ\^\°\*\/\|0-9০-৯])",
     re.IGNORECASE
 )
 
@@ -177,10 +229,10 @@ INLINE_SOL_RE = re.compile(
     re.IGNORECASE
 )
 
-HEADER_NOISE_RE = re.compile(
-    r"(?:Educationalpdf|Educationaf|Rhombus\s*Publications|পরিমাণগত\s*রসায়ন|ACS\s*Varsity|ACS\s*Chemistry|ACS\s*Cliemistry)",
-    re.IGNORECASE
-)
+HEADER_NOISE_RE = re.compile(rf"(?:{noise_pattern_str})", re.IGNORECASE)
+DOTLESS_KW_RE = re.compile(rf"(?:{dotless_kw_pattern})\b", re.IGNORECASE)
+VALID_CROP_KW_RE = re.compile(rf"(?:{valid_crop_kw_pattern})", re.IGNORECASE)
+EQ_GUARD_KW_RE = re.compile(rf"(?:{eq_guard_kw_pattern})", re.IGNORECASE)
 
 def _b2e_int(s):
     t = s.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).strip()
@@ -382,7 +434,7 @@ def trim_vertical_whitespace(ink, xr, top, bot):
     return max(top, (y0 + nz[0]) / SC - 3.5), min(bot, (y0 + nz[-1]) / SC + 5.0)
 
 # ==============================================================================
-# ৭. ৩-পাস শক্তিশালী OCR ইঞ্জিন
+# ৭. ৩-পাস শক্তিশালী OCR ইঞ্জিন ও মার্কার বিশ্লেষণ
 # ==============================================================================
 def group_words_into_lines(words):
     if not words:
@@ -412,7 +464,7 @@ def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn
             pdf_words.append((wx0, wy0, wx1, wy1, text.strip()))
 
     pdf_lines = group_words_into_lines(pdf_words)
-    sol_in_pdf = sum(1 for l in pdf_lines if line_has_solution_marker(l, " ".join(w[4] for w in l), x0 + 120.0)[0])
+    sol_in_pdf = sum(1 for l in pdf_lines if line_has_solution_marker(l, " ".join(w[4] for w in l), x0 + MAX_SOL_X_OFFSET)[0])
     q_in_pdf = sum(1 for w in pdf_words if NUM_RE.match(w[4]) or PURE_PREFIX_RE.match(w[4]))
 
     ocr_words = []
@@ -492,7 +544,7 @@ def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn
         group_words_into_lines(ocr_eng_words),
     )
 
-def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
+def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray_log=None, page_no=1, col_no=1):
     starts, stops = [], []
     if not lines:
         return starts, stops
@@ -504,25 +556,36 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
         first_w = line[0]
         wx0, wy0, wx1, wy1, t0 = first_w
         joined_text = " ".join(w[4] for w in line).strip()
-        if not joined_text or HEADER_NOISE_RE.search(joined_text):
+        if not joined_text:
+            continue
+
+        if HEADER_NOISE_RE.search(joined_text):
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "বাতিল (হেডার নয়েজ)", "লাইন": joined_text[:70]})
             continue
 
         local_shift = div_slope * (wy0 - H * 0.5)
-        max_q_x = max(actual_left_x + 52.0, text_left_x + local_shift + 42.0)
-        max_sol_x = max(actual_left_x + 120.0, text_left_x + local_shift + 108.0)
+        max_q_x = max(actual_left_x + MAX_Q_X_OFFSET, text_left_x + local_shift + (MAX_Q_X_OFFSET - 10.0))
+        max_sol_x = max(actual_left_x + MAX_SOL_X_OFFSET, text_left_x + local_shift + (MAX_SOL_X_OFFSET - 12.0))
 
         if BULLET_STOP_RE.match(t0) or BULLET_STOP_RE.match(joined_text):
             stops.append(wy0 - 1.0)
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (বুলেট চিহ্ন)", "লাইন": joined_text[:70]})
             continue
 
         has_sol, sol_y = line_has_solution_marker(line, joined_text, max_sol_x)
         if has_sol:
             stops.append((sol_y if sol_y is not None else wy0) - 1.2)
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (সমাধান ট্যাগ)", "লাইন": joined_text[:70]})
             continue
 
         if ("=" in joined_text or "⇒" in joined_text or "∴" in joined_text) and "?" not in joined_text:
-            if not re.search(r"(?:কত|কোনটি|হলে|যদি|নির্ণয়|নির্ণয়|সমান|অর্ধেক|দ্বিগুণ)", joined_text):
+            if not EQ_GUARD_KW_RE.search(joined_text):
                 stops.append(wy0 - 1.0)
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (সমীকরণ লাইন)", "লাইন": joined_text[:70]})
                 continue
 
         if OPT_TOKEN_RE.match(t0):
@@ -541,7 +604,7 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
             is_num_q = bool(NUM_RE.match(c_t0) or PURE_PREFIX_RE.match(c_t0))
             is_dotless_q = False
             if not is_num_q and re.match(r"^[0-9০-৯]{1,2}$", c_t0):
-                if "?" in joined_text or re.search(r"(?:কত|কোনটি|হচ্ছে|থাকে|থাকবে|রয়েছে|রয়েছে|আছে|ওজন|ভর|সংখ্যা|আয়তন|আয়তন|মোল|লিটার|গ্রাম|গ্যাস|পরমাণু|অণু|STP|NTP)\b", joined_text):
+                if "?" in joined_text or DOTLESS_KW_RE.search(joined_text):
                     is_dotless_q = True
 
             if is_num_q or is_dotless_q:
@@ -549,7 +612,7 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
                     continue
                 m_num = NUM_RE.match(c_t0)
                 qn = _b2e_int(m_num.group(1)) if (m_num and m_num.group(1)) else (_b2e_int(c_t0) if is_dotless_q else None)
-                if qn is not None and (qn == 0 or qn > 160):
+                if qn is not None and (qn == 0 or qn > MAX_Q_NUMBER):
                     continue
 
                 rest_text = " ".join(w[4] for w in line[idx_c + 1:]).strip()
@@ -557,7 +620,7 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
                     continue
 
                 if ("=" in rest_text or "⇒" in rest_text or "∴" in rest_text) and "?" not in rest_text:
-                    if not re.search(r"(?:কত|কোনটি|হলে|যদি)", rest_text):
+                    if not EQ_GUARD_KW_RE.search(rest_text):
                         continue
 
                 has_q_words = bool(re.search(r"[অ-ঔক-হ]{2,}|[a-zA-Z]{3,}|\?", rest_text))
@@ -566,6 +629,8 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0):
                     if OPT_UNIT_RE.match(nxt_w[4]) or (nxt_w[0] - c_wx1 < 3.5 and re.match(r"^[0-9০-৯]", nxt_w[4])):
                         continue
                 starts.append(c_wy0 - 1.5)
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(c_wy0, 1), "সিদ্ধান্ত": "শুরু (প্রশ্ন শনাক্ত)", "লাইন": joined_text[:70]})
                 break
 
     return starts, stops
@@ -583,7 +648,7 @@ def is_valid_question_crop(lines_in_crop):
 
     has_q_mark = "?" in full_txt
     has_options = bool(re.search(r"(?:[\(\[]?[ক-ঘa-dA-D][\)\]\.]|[ⓐⓑⓒⓓ])", full_txt))
-    has_q_words = bool(re.search(r"(?:কত|কোনটি|কোন|হচ্ছে|থাকে|থাকবে|রয়েছে|রয়েছে|আছে|নির্ণয়|নির্ণয়|ওজন|ভর|সংখ্যা|আয়তন|আয়তন|ঘনমাত্রা|মোল|লিটার|গ্যাস|পরমাণু|অণু|বিক্রিয়া|বিক্রিয়া|লেখচিত্র|what|which|find|calculate|value)", full_txt, re.IGNORECASE))
+    has_q_words = bool(VALID_CROP_KW_RE.search(full_txt))
     eq_count = full_txt.count("=") + full_txt.count("⇒")
 
     if eq_count >= 1 and not has_q_mark and not has_options and not has_q_words:
@@ -729,8 +794,9 @@ def render_progress_card(placeholder, current_idx, total_pages, page_no, found_c
     </div>
     """, unsafe_allow_html=True)
 
-def extract_questions_from_pdf(src_doc, page_indices, progress_slot):
+def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xray=False):
     questions = []
+    xray_logs = []
     total_to_scan = len(page_indices)
 
     for idx, pno in enumerate(page_indices):
@@ -782,17 +848,18 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot):
             )
             h_barriers = detect_horizontal_barriers(gray, cx0, cx1)
 
-            p_starts, p_stops = analyze_lines_for_markers(pdf_lines, actual_left_x, div_slope, H)
-            o_starts, o_stops = analyze_lines_for_markers(ocr_lines, actual_left_x, div_slope, H)
-            t_starts, t_stops = analyze_lines_for_markers(ocr_thin_lines, actual_left_x, div_slope, H)
-            e_starts, e_stops = analyze_lines_for_markers(ocr_eng_lines, actual_left_x, div_slope, H)
+            log_target = xray_logs if collect_xray else None
+            p_starts, p_stops = analyze_lines_for_markers(pdf_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1)
+            o_starts, o_stops = analyze_lines_for_markers(ocr_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1)
+            t_starts, t_stops = analyze_lines_for_markers(ocr_thin_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1)
+            e_starts, e_stops = analyze_lines_for_markers(ocr_eng_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1)
 
             all_starts = sorted(p_starts + o_starts + t_starts + e_starts)
             all_stops = sorted(p_stops + o_stops + t_stops + e_stops + list(h_barriers))
 
             clean_starts = []
             for st_y in all_starts:
-                if not clean_starts or st_y - clean_starts[-1] > 16.0:
+                if not clean_starts or st_y - clean_starts[-1] > MIN_START_GAP_PT:
                     clean_starts.append(st_y)
 
             ref_lines = ocr_lines if len(ocr_lines) >= len(pdf_lines) else pdf_lines
@@ -804,6 +871,8 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot):
 
                 crop_lines = [l for l in ref_lines if l and (st_y - 2.0 <= l[0][1] <= end_y + 2.0)]
                 if not is_valid_question_crop(crop_lines):
+                    if collect_xray:
+                        xray_logs.append({"পৃষ্ঠা": pno + 1, "কলাম": col_i + 1, "Y": round(st_y, 1), "সিদ্ধান্ত": "বাতিল (বৈধ প্রশ্ন নয়)", "লাইন": " ".join(w[4] for l in crop_lines[:1] for w in l)[:70]})
                     continue
 
                 div_at_top = div_fn(st_y)
@@ -837,6 +906,7 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot):
             f"পৃষ্ঠা {pno + 1} সম্পন্ন"
         )
 
+    st.session_state["rv_xray_logs"] = xray_logs
     return questions
 
 def build_practice_pdf(src_doc, questions):
@@ -895,7 +965,7 @@ def build_practice_pdf(src_doc, questions):
 
 
 # ==============================================================================
-# ৯.৯ বাহ্যিক canvas_editor.html লোডার ও বক্স সিঙ্ক ইঞ্জিন
+# ৯.৯ বাহ্যিক canvas_editor.html লোডার, বক্স সিঙ্ক ও রিইনফোর্সমেন্ট লার্নিং ইঞ্জিন
 # ==============================================================================
 def questions_to_rows(questions):
     rows = []
@@ -1034,6 +1104,35 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
         )
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
+def render_learning_suggestions():
+    """বক্স এডিটরের সংশোধন থেকে পাওয়া নতুন প্যাটার্নগুলো সেভ করার ইন্টারঅ্যাক্টিভ কার্ড।"""
+    suggestions = st.session_state.get("rv_suggestions", [])
+    if not suggestions:
+        return
+
+    for idx, sug in enumerate(list(suggestions)):
+        st.info(f"🧠 **নতুন প্যাটার্ন শনাক্ত:** {sug['prompt']}\n\n*(নমুনা লাইন: `{sug.get('sample', '')}`)*")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ হ্যাঁ, গিটহাবে সেভ করুন", key=f"sug_yes_{idx}_{sug['pattern']}"):
+                ok, msg = commit_rule_to_kb(
+                    sug["type"],
+                    sug["pattern"],
+                    f"Learned {sug['type']} from user box edit on page {sug['page']}"
+                )
+                suggestions.pop(idx)
+                st.session_state["rv_suggestions"] = suggestions
+                if ok:
+                    st.success(msg)
+                else:
+                    st.warning(msg)
+                st.rerun()
+        with c2:
+            if st.button("❌ বাদ দিন", key=f"sug_no_{idx}_{sug['pattern']}"):
+                suggestions.pop(idx)
+                st.session_state["rv_suggestions"] = suggestions
+                st.rerun()
+
 def render_results_and_review(raw_pdf, file_key):
     ver = st.session_state.get("rv_ver", 0)
 
@@ -1047,9 +1146,21 @@ def render_results_and_review(raw_pdf, file_key):
     if bridge_val and bridge_val != st.session_state.get("last_bridge_val"):
         st.session_state["last_bridge_val"] = bridge_val
         try:
+            old_df = st.session_state.get("rv_rows")
             payload = json.loads(bridge_val)
             new_boxes = payload.get("boxes", [])
             new_df = pd.DataFrame(new_boxes, columns=["keep", "page", "x0", "y0", "x1", "y1"])
+
+            # ব্যবহারকারীর সংশোধন বিশ্লেষণ করে নতুন নিয়ম শেখা (Feedback Loop)
+            learned = analyze_user_corrections(raw_pdf, old_df, new_df)
+            if learned:
+                cur_sugs = st.session_state.get("rv_suggestions", [])
+                existing_pats = {(s["type"], s["pattern"]) for s in cur_sugs}
+                for item in learned:
+                    if (item["type"], item["pattern"]) not in existing_pats:
+                        cur_sugs.append(item)
+                st.session_state["rv_suggestions"] = cur_sugs
+
             st.session_state["rv_rows"] = new_df
             src = fitz.open(stream=raw_pdf, filetype="pdf")
             qs = rows_to_questions(new_df, src)
@@ -1061,6 +1172,9 @@ def render_results_and_review(raw_pdf, file_key):
             src.close()
         except Exception as e:
             st.error(f"ত্রুটি: {e}")
+
+    # বক্স এডিটর থেকে শেখা নতুন প্যাটার্নের নোটিফিকেশন প্রদর্শন
+    render_learning_suggestions()
 
     rows_df = st.session_state["rv_rows"]
     active_count = len(rows_df[rows_df["keep"] == True]) if not rows_df.empty else 0
@@ -1089,6 +1203,11 @@ def render_results_and_review(raw_pdf, file_key):
             mime="application/pdf",
             key=f"dl_top_{ver}_{active_count}"
         )
+
+    # এক্স-রে ডায়াগনস্টিক মোড চালু থাকলে বিস্তারিত রিপোর্ট দেখানো
+    if XRAY_MODE and st.session_state.get("rv_xray_logs"):
+        with st.expander("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট (কোন লাইন কেন গৃহীত বা বাতিল হলো)", expanded=False):
+            st.dataframe(pd.DataFrame(st.session_state["rv_xray_logs"]), use_container_width=True)
 
     with st.expander("বক্স এডিটর", expanded=False):
         selected_indices = st.session_state.get("rv_page_indices", [0])
@@ -1142,7 +1261,7 @@ if uploaded_file is not None:
 
     file_key = f"{uploaded_file.name}|{len(raw_pdf)}"
     if st.session_state.get("rv_file_key") != file_key:
-        for _k in ("rv_rows", "rv_auto_pdf", "rv_pages", "rv_page_indices", "last_bridge_val"):
+        for _k in ("rv_rows", "rv_auto_pdf", "rv_pages", "rv_page_indices", "last_bridge_val", "rv_suggestions", "rv_xray_logs"):
             st.session_state.pop(_k, None)
 
     if st.button("স্ক্যান করুন"):
@@ -1150,7 +1269,7 @@ if uploaded_file is not None:
         try:
             src_doc = fitz.open(stream=raw_pdf, filetype="pdf")
             selected_pages = parse_page_range(PAGE_RANGE_TEXT, len(src_doc))
-            questions = extract_questions_from_pdf(src_doc, selected_pages, progress_slot)
+            questions = extract_questions_from_pdf(src_doc, selected_pages, progress_slot, collect_xray=XRAY_MODE)
             progress_slot.empty()
 
             st.session_state["rv_rows"] = questions_to_rows(questions)
@@ -1158,6 +1277,7 @@ if uploaded_file is not None:
             st.session_state["rv_pages"] = len(selected_pages)
             st.session_state["rv_page_indices"] = selected_pages
             st.session_state["rv_file_key"] = file_key
+            st.session_state["rv_suggestions"] = []
             st.session_state["rv_ver"] = st.session_state.get("rv_ver", 0) + 1
             src_doc.close()
 
@@ -1201,9 +1321,7 @@ if components is not None:
         pass
 
 
-# ১২. (নতুন) নরম ঝাপসা ব্যাকগ্রাউন্ড ও সিন্থেসাইজ সাউন্ড এফেক্ট
-#     উপরের কোনো কোড বদলানো হয়নি — এই অংশ আলাদা ফাইল (ambient.css, sfx.js) থেকে চলে।
-#     কোনো সমস্যা হলে এই ব্লক বা ফাইল দুটো মুছে দিলেই আগের অবস্থায় ফিরবে।
+# ১২. নরম ঝাপসা ব্যাকগ্রাউন্ড ও সিন্থেসাইজ সাউন্ড এফেক্ট
 def load_ambient_and_sfx(css_file="ambient.css", js_file="sfx.js"):
     try:
         load_external_css(css_file)
