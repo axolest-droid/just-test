@@ -1284,7 +1284,7 @@ def render_results_and_review(raw_pdf, file_key):
         )
 
     if XRAY_MODE and st.session_state.get("rv_xray_logs"):
-        with st.expander("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট (কোন লাইন কেন গৃহীত বা বাতিল হলো)", expanded=False):
+        with st.popover("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট দেখুন", use_container_width=True):
             st.dataframe(pd.DataFrame(st.session_state["rv_xray_logs"]), use_container_width=True)
 
     with st.expander("বক্স এডিটর", expanded=False):
