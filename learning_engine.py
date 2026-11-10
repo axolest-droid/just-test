@@ -29,11 +29,7 @@ DEFAULT_REPO = "axolest-droid/just-test"
 DEFAULT_BRANCH = "main"
 
 
-# ==============================================================================
-# ১. নলেজ-বেস লোড এবং সংরক্ষণ ব্যবস্থাপনা
-# ==============================================================================
 def get_default_kb():
-    """যদি কোনো কারণে জেসন ফাইল না পাওয়া যায়, তবে ডিফল্ট নিয়মাবলি প্রদান করবে।"""
     return {
         "question_tags": [
             "Q", "Question", "Ques", "Prob", "Problem", "Ex", "Example",
@@ -73,7 +69,8 @@ def get_default_kb():
             "max_question_number": 160,
             "min_start_gap_pt": 16.0,
             "max_q_x_offset": 52.0,
-            "max_sol_x_offset": 120.0
+            "max_sol_x_offset": 120.0,
+            "max_internal_blank_gap_pt": 24.0
         }
     }
 
@@ -86,10 +83,6 @@ def _read_txt_lines(filename):
 
 
 def load_knowledge_base():
-    """
-    knowledge_base.json এবং পুরোনো question_tags.txt ও solution_tags.txt থেকে
-    সমস্ত নিয়ম একত্রিত করে লোড করে।
-    """
     kb = get_default_kb()
     if os.path.exists(KB_FILENAME):
         try:
@@ -105,7 +98,6 @@ def load_knowledge_base():
         except Exception:
             pass
 
-    # পুরোনো ট্যাগ ফাইলগুলোর সাথে সামঞ্জস্য বজায় রাখা
     txt_q = _read_txt_lines("question_tags.txt")
     txt_s = _read_txt_lines("solution_tags.txt")
     if txt_q:
@@ -116,11 +108,7 @@ def load_knowledge_base():
     return kb
 
 
-# ==============================================================================
-# ২. গিটহাব এপিআই (GitHub REST API) অটো-কমিট ফাংশন
-# ==============================================================================
 def _get_github_credentials():
-    """স্ট্রিমলিট সিক্রেটস বা এনভায়রনমেন্ট থেকে গিটহাব টোকেন ও রিপোজিটরি তথ্য নেয়।"""
     token = None
     repo = DEFAULT_REPO
     branch = DEFAULT_BRANCH
@@ -139,11 +127,28 @@ def _get_github_credentials():
     return token.strip() if token else None, repo.strip(), branch.strip()
 
 
+def verify_admin_pin(input_pin):
+    """
+    স্ট্রিমলিট সিক্রেটস বা এনভায়রনমেন্টে থাকা ADMIN_PIN-এর সাথে ইনপুট পিন মিলিয়ে দেখে।
+    """
+    secret_pin = None
+    try:
+        if "ADMIN_PIN" in st.secrets:
+            secret_pin = str(st.secrets["ADMIN_PIN"]).strip()
+    except Exception:
+        pass
+
+    if not secret_pin:
+        secret_pin = os.environ.get("ADMIN_PIN", "").strip()
+
+    # যদি সিক্রেটসে কোনো পিন সেট করা না থাকে, তবে ডিফল্ট পিন "1234" হিসেবে কাজ করবে
+    if not secret_pin:
+        secret_pin = "1234"
+
+    return str(input_pin).strip() == secret_pin
+
+
 def push_file_to_github(filepath, content_str, commit_message):
-    """
-    গিটহাব এপিআই ব্যবহার করে সরাসরি রিপোজিটরিতে যেকোনো ফাইল আপডেট বা তৈরি করে।
-    রিটার্ন করে: (success_bool, status_message_str)
-    """
     token, repo, branch = _get_github_credentials()
     if not token:
         return False, "গিটহাব টোকেন পাওয়া যায়নি (শুধুমাত্র লোকাল সেশনে সেভ হয়েছে)।"
@@ -156,7 +161,6 @@ def push_file_to_github(filepath, content_str, commit_message):
     }
 
     try:
-        # ফাইলটি আগে থেকেই গিটহাবে থাকলে তার SHA সংগ্রহ করা
         sha = None
         get_resp = requests.get(api_url, headers=headers, params={"ref": branch}, timeout=10)
         if get_resp.status_code == 200:
@@ -182,16 +186,6 @@ def push_file_to_github(filepath, content_str, commit_message):
 
 
 def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF pattern"):
-    """
-    নলেজ-বেসের নির্দিষ্ট ক্যাটাগরিতে নতুন নিয়ম যোগ করে লোকালি ও গিটহাবে সেভ করে।
-    category হতে পারে:
-      - 'question_tags'
-      - 'solution_tags'
-      - 'header_noise_patterns'
-      - 'bullet_stop_chars'
-      - 'dotless_question_keywords'
-      - 'valid_crop_keywords'
-    """
     val = str(new_value).strip()
     if not val:
         return False, "ফাঁকা মান সেভ করা যাবে না।"
@@ -205,7 +199,6 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
 
     kb[category].append(val)
 
-    # ১. লোকাল জেসন ফাইলে সেভ
     json_str = json.dumps(kb, ensure_ascii=False, indent=2)
     try:
         with open(KB_FILENAME, "w", encoding="utf-8") as f:
@@ -213,7 +206,6 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
     except Exception:
         pass
 
-    # ২. প্রশ্ন বা সমাধান ট্যাগ হলে সংশ্লিষ্ট টেক্সট ফাইলও আপডেট রাখা
     if category == "question_tags":
         try:
             q_txt = "# নিচে প্রতি লাইনে একটি করে প্রশ্ন শুরুর ট্যাগ লিখুন\n" + "\n".join(kb["question_tags"]) + "\n"
@@ -231,7 +223,6 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
         except Exception:
             pass
 
-    # ৩. মূল knowledge_base.json গিটহাবে কমিট করা
     ok, msg = push_file_to_github(
         KB_FILENAME,
         json_str,
@@ -240,13 +231,7 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
     return ok, msg
 
 
-# ==============================================================================
-# ৩. বক্স এডিটরের সংশোধন বিশ্লেষণ করে শেখার ইঞ্জিন (Feedback Loop)
-# ==============================================================================
 def _extract_lines_from_clip(page, clip_rect):
-    """
-    পিডিএফের নির্দিষ্ট অংশ (clip_rect) থেকে লেখা ওসিআর বা টেক্সট লেয়ার থেকে বের করে।
-    """
     words = []
     for wx0, wy0, wx1, wy1, txt, *_ in page.get_text("words"):
         if clip_rect.x0 - 3 <= wx0 <= clip_rect.x1 + 3 and clip_rect.y0 - 3 <= wy0 <= clip_rect.y1 + 3:
@@ -305,10 +290,6 @@ def _rect_iou(r1, r2):
 
 
 def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
-    """
-    ব্যবহারকারী ক্যানভাস এডিটরে বক্স সেভ করার পর পুরোনো বক্স ও নতুন বক্সের তুলনা করে
-    শেখার যোগ্য প্যাটার্ন (Suggestions) খুঁজে বের করে।
-    """
     suggestions = []
     if old_rows_df is None or new_rows_df is None:
         return suggestions
@@ -347,21 +328,18 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
             best_i, best_iou = -1, 0.0
             for i, or_rect in enumerate(olds):
                 iou = _rect_iou(nr, or_rect)
-                # যদি বক্সের উপরের অংশ একই থাকে কিন্তু নিচের অংশ কাটা হয়
                 horiz_overlap = min(nr.x1, or_rect.x1) - max(nr.x0, or_rect.x0)
                 if horiz_overlap > 0.6 * min(nr.width, or_rect.width) and abs(nr.y0 - or_rect.y0) < 15.0:
                     iou = max(iou, 0.55)
                 if iou > best_iou:
                     best_iou, best_i = iou, i
 
-            # কেস ১: সম্পূর্ণ নতুন বক্স যোগ করা হয়েছে (প্রশ্ন মিস হয়েছিল)
             if best_iou < 0.25:
                 top_strip = fitz.Rect(nr.x0, nr.y0, nr.x1, min(nr.y1, nr.y0 + 28.0))
                 lines = _extract_lines_from_clip(page, top_strip)
                 if lines:
                     first_line = lines[0]
                     first_tok = first_line.split()[0].strip("([{.।:;,-")
-                    # যদি নতুন কোনো প্রিফিক্স বা চিহ্ন থাকে (যেমন: "অনুশীলনী-১", "প্রশ্নঃ", "★")
                     cleaned_prefix = re.sub(r"[0-9০-৯]+.*$", "", first_tok).strip(".:-()[] ")
                     if cleaned_prefix and len(cleaned_prefix) <= 18 and cleaned_prefix.lower() not in existing_q:
                         suggestions.append({
@@ -373,7 +351,6 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                         })
                         existing_q.add(cleaned_prefix.lower())
 
-            # কেস ২: বক্সের নিচের অংশ কেটে ছোট করা হয়েছে (সমাধান ঢুকে গিয়েছিল)
             elif best_i != -1:
                 matched_old.add(best_i)
                 or_rect = olds[best_i]
@@ -393,7 +370,6 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                             })
                             existing_s.add(first_tok.lower())
 
-       # কেস ৩: পুরোনো বক্স পুরোপুরি ডিলিট করা হয়েছে (জলছাপ বা হেডার নয়েজ ছিল)
         for i, or_rect in enumerate(olds):
             if i not in matched_old:
                 any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for nr in news)
