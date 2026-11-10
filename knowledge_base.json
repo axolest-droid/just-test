@@ -1,0 +1,58 @@
+{
+  "_ai_instructions": {
+    "purpose": "Central Knowledge Base & Rule Engine for SMART SCANNER PDF Question Extractor.",
+    "how_to_fix_missed_questions": "If a PDF uses a new prefix before question numbers (e.g., 'অনুশীলনী', 'Test'), add it to 'question_tags'. If questions have no dot/bracket after numbers and are missed, add common words from those questions to 'dotless_question_keywords'.",
+    "how_to_fix_uncut_solutions": "If a solution or explanation is included inside a question box, add the starting word/marker of that solution to 'solution_tags' or its symbol to 'bullet_stop_chars'.",
+    "how_to_fix_false_positive_boxes": "If page headers, watermarks, or coaching names are falsely cropped as questions, add the text/regex to 'header_noise_patterns'. If math steps are cropped as questions, check 'valid_crop_keywords'."
+  },
+  "question_tags": [
+    "Q", "Question", "Ques", "Prob", "Problem", "Ex", "Example",
+    "প্রশ্ন", "এমসিকিউ", "সমস্যা", "উদাহরণ", "❑", "▫", "▪", "■", "□"
+  ],
+  "solution_tags": [
+    "Sol", "Soln", "Solⁿ", "Sol^n", "So1", "So1n", "S0l", "S0ln", "5ol", "5oln",
+    "Solution", "Ans", "Answer", "Shortcut", "Hint", "Hints", "Note", "[Note", "[Note:",
+    "উত্তর", "উত্ত", "উওর", "উত্তব", "উত্তন", "উত্তম", "ডত্তর", "ডওর", "ডত্তব", "ত্তর", "ত্তব", "উঃ", "উ:", "ত্তঃ", "ত্ত:",
+    "সমাধান", "সমাধা", "মাধান", "সলভ", "সল্‌ভ",
+    "ব্যাখ্যা", "ব্যখ্যা", "ব্যাখা", "ব্যখা", "্যাখ্যা", "াখ্যা", "রাখ্যা", "য্যাখ্যা", "বাখ্যা", "ব্যাখ",
+    "বিকল্প", "িকল্প", "শর্টকাট",
+    "প্র্যাকটিস প্রবলেম", "প্র্যাকটিস", "প্রশ্ন-সলভ", "প্রশ্ন-সল্‌ভ",
+    "Written", "লিখিত", "বিগত ভর্তি", "DËi:", "DËi", "mgvavb", "e¨vL¨v",
+    "৪1\":", "Sol\":", "৪91%:", "ডগা:", "৪01\":"
+  ],
+  "header_noise_patterns": [
+    "Educationalpdf",
+    "Educationaf",
+    "Rhombus\\s*Publications",
+    "পরিমাণগত\\s*রসায়ন",
+    "ACS\\s*Varsity",
+    "ACS\\s*Chemistry",
+    "ACS\\s*Cliemistry"
+  ],
+  "bullet_stop_chars": [
+    "➢", "➤", "➣", "•", "♦", "►"
+  ],
+  "option_units": [
+    "mol", "L", "g", "kg", "mL", "ml", "cm", "mm", "m", "gm", "sec", "min", "s", "×", "x", "10^", "10"
+  ],
+  "dotless_question_keywords": [
+    "কত", "কোনটি", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
+    "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "মোল", "লিটার", "গ্রাম",
+    "গ্যাস", "পরমাণু", "অণু", "STP", "NTP"
+  ],
+  "valid_crop_keywords": [
+    "কত", "কোনটি", "কোন", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
+    "নির্ণয়", "নির্ণয়", "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "ঘনমাত্রা",
+    "মোল", "লিটার", "গ্যাস", "পরমাণু", "অণু", "বিক্রিয়া", "বিক্রিয়া", "লেখচিত্র",
+    "what", "which", "find", "calculate", "value"
+  ],
+  "equation_question_guard_words": [
+    "কত", "কোনটি", "হলে", "যদি", "নির্ণয়", "নির্ণয়", "সমান", "অর্ধেক", "দ্বিগুণ"
+  ],
+  "layout_thresholds": {
+    "max_question_number": 160,
+    "min_start_gap_pt": 16.0,
+    "max_q_x_offset": 52.0,
+    "max_sol_x_offset": 120.0
+  }
+}
