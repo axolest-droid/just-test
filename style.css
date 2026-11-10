@@ -24,29 +24,20 @@ code, pre, .mono-num, [data-testid="stSliderTickBar"] > div, [data-testid="stThu
     font-family: 'JetBrains Mono', monospace !important;
 }
 
-/* ডান পাশের অদৃশ্য টুলবার ও ডেকোরেশন সম্পূর্ণ বন্ধ করা */
-#MainMenu,
-footer,
-[data-testid="stDeployButton"],
-[data-testid="stToolbar"],
-[data-testid="stDecoration"],
-[data-testid="stStatusWidget"],
-[data-testid="stHeaderActionElements"] {
+#MainMenu, footer, [data-testid="stDeployButton"] {
     visibility: hidden !important;
     display: none !important;
-    pointer-events: none !important;
 }
 
-/* হেডারকে শুধু বাম কোণার সাইডবার বাটনের (৫৬ পিক্সেল) মধ্যে সীমাবদ্ধ করা, যাতে ডান পাশে বক্স এডিটরের ওপর না আসে */
+/* হেডারের ফাঁকা জায়গা যেন বক্স এডিটরের ক্লিক না আটকায়, কিন্তু সেটিংস বাটন সচল থাকে */
 header, [data-testid="stHeader"] {
     background: transparent !important;
-    width: 56px !important;
-    right: auto !important;
-    height: 48px !important;
     pointer-events: none !important;
-    z-index: 10 !important;
 }
 
+header button,
+header a,
+[data-testid="stHeader"] button,
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarCollapsedControl"] *,
 [data-testid="collapsedControl"],
@@ -111,7 +102,6 @@ header, [data-testid="stHeader"] {
         margin-bottom: 0 !important;
         width: 100% !important;
         align-self: start !important;
-        z-index: 999995 !important;
     }
 
     body:not([data-device-mode="phone"]) .block-container [data-testid="stExpander"] {
@@ -420,8 +410,6 @@ body[data-device-mode="phone"] [data-testid="stExpander"] details summary {
     color: var(--text-primary) !important;
     cursor: pointer !important;
     user-select: none !important;
-    position: relative !important;
-    z-index: 30 !important;
 }
 [data-testid="stExpander"] details summary:hover {
     background-color: var(--bg-slate-hover) !important;
