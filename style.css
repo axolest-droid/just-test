@@ -24,21 +24,35 @@ code, pre, .mono-num, [data-testid="stSliderTickBar"] > div, [data-testid="stThu
     font-family: 'JetBrains Mono', monospace !important;
 }
 
-#MainMenu, footer, [data-testid="stDeployButton"] {
+/* ডান পাশের অদৃশ্য টুলবার ও ডেকোরেশন সম্পূর্ণ বন্ধ করা */
+#MainMenu,
+footer,
+[data-testid="stDeployButton"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stHeaderActionElements"] {
     visibility: hidden !important;
     display: none !important;
-}
-
-/* অদৃশ্য হেডার যেন বক্স এডিটর বারের ক্লিক আটকে না দেয় */
-header, [data-testid="stHeader"] {
-    background: transparent !important;
     pointer-events: none !important;
 }
-header button,
-[data-testid="stHeader"] button,
-[data-testid="stToolbar"],
+
+/* হেডারকে শুধু বাম কোণার সাইডবার বাটনের (৫৬ পিক্সেল) মধ্যে সীমাবদ্ধ করা, যাতে ডান পাশে বক্স এডিটরের ওপর না আসে */
+header, [data-testid="stHeader"] {
+    background: transparent !important;
+    width: 56px !important;
+    right: auto !important;
+    height: 48px !important;
+    pointer-events: none !important;
+    z-index: 10 !important;
+}
+
 [data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] {
+[data-testid="stSidebarCollapsedControl"] *,
+[data-testid="collapsedControl"],
+[data-testid="collapsedControl"] *,
+[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"] * {
     pointer-events: auto !important;
 }
 
@@ -63,7 +77,7 @@ header button,
         max-width: 1380px !important;
         padding-left: 1.8rem !important;
         padding-right: 1.8rem !important;
-        padding-top: 1.4rem !important;
+        padding-top: 2.2rem !important;
     }
 
     body:not([data-device-mode="phone"]) .block-container:has([data-testid="stExpander"]) > [data-testid="stVerticalBlock"],
@@ -92,12 +106,12 @@ header button,
         grid-column: 2 !important;
         grid-row: 1 / span 16 !important;
         position: sticky !important;
-        top: 1rem !important;
+        top: 2.2rem !important;
         margin-top: 0 !important;
         margin-bottom: 0 !important;
         width: 100% !important;
         align-self: start !important;
-        z-index: 20 !important;
+        z-index: 999995 !important;
     }
 
     body:not([data-device-mode="phone"]) .block-container [data-testid="stExpander"] {
@@ -407,11 +421,7 @@ body[data-device-mode="phone"] [data-testid="stExpander"] details summary {
     cursor: pointer !important;
     user-select: none !important;
     position: relative !important;
-    z-index: 25 !important;
-    transition: background-color 0.15s ease, color 0.15s ease !important;
-}
-[data-testid="stExpander"] details summary * {
-    pointer-events: none !important;
+    z-index: 30 !important;
 }
 [data-testid="stExpander"] details summary:hover {
     background-color: var(--bg-slate-hover) !important;
