@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=Hind+Siliguri:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap');
+  * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  body {
+    margin: 0; padding: 0;
+    background: #0B0E14; color: #E6EDF3;
+    font-family: 'Plus Jakarta Sans', 'Hind Siliguri', sans-serif;
+  }
+  .editor-shell {
+    position: relative;
+    background: #121721;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .topbar {
+    background: #181F2C;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .nav-group, .action-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: #121721;
+    color: #E6EDF3;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 11.8px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.14s ease;
+  }
+  .btn svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+  }
+  .btn:hover:not(:disabled) {
+    background: #1F2937;
+    border-color: #5E9E8B;
+    color: #6FB09D;
+  }
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .btn.active-multi, .btn.active-pan {
+    background: rgba(14, 165, 233, 0.18);
+    color: #38BDF8;
+    border-color: #0EA5E9;
+  }
+  .page-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #E6EDF3;
+    background: #0B0E14;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 7px;
+    padding: 5px 8px;
+    min-width: 82px;
+    text-align: center;
+  }
+  .btn-save {
+    background: #5E9E8B;
+    color: #0B0E14;
+    border-color: #5E9E8B;
+    font-weight: 700;
+    padding: 5px 12px;
+  }
+  .btn-save:hover {
+    background: #6FB09D !important;
+    border-color: #6FB09D !important;
+    color: #0B0E14 !important;
+  }
+  .viewport-wrap {
+    position: relative;
+    width: 100%;
+    height: 760px;
+  }
+  .viewport {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background: #080A0F;
+    text-align: center;
+    padding: 14px 10px 95px 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .stage {
+    position: relative;
+    display: inline-block;
+    width: 94%;
+    max-width: 680px;
+    background: #ffffff;
+    border-radius: 4px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+    line-height: 0;
+    text-align: left;
+    transform-origin: top left;
+    transition: width 0.12s ease;
+  }
+  body.phone-mode .stage {
+    width: 100%;
+    max-width: none;
+  }
+  .stage img {
+    display: block;
+    width: 100%;
+    height: auto;
+    pointer-events: none;
+  }
+  .overlay {
+    position: absolute;
+    left: 0; top: 0; width: 100%; height: 100%;
+    cursor: default;
+  }
+  /* ফোন মোডে ভাসমান জুম ও প্যান ডক (নিচের বাম কোণায়) */
+  .zoom-dock {
+    position: absolute;
+    bottom: 68px;
+    left: 16px;
+    z-index: 82;
+    display: none;
+    align-items: center;
+    gap: 4px;
+    background: rgba(18, 23, 33, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    padding: 4px 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  }
+  body.phone-mode .zoom-dock {
+    display: inline-flex;
+  }
+  .z-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.07);
+    color: #E6EDF3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .z-btn:active {
+    transform: scale(0.92);
+    background: rgba(94, 158, 139, 0.3);
+  }
+  .z-btn.pan-active {
+    background: #0EA5E9;
+    color: #090C10;
+  }
+  .z-btn svg {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    fill: none;
+  }
+  .z-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6FB09D;
+    padding: 0 5px;
+    min-width: 44px;
+    text-align: center;
+  }
+  /* ভাসমান + বাটন (উপরে তোলা ও হালকা স্বচ্ছ) */
+  .fab-add {
+    position: absolute;
+    bottom: 68px;
+    right: 24px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #5E9E8B;
+    color: #0B0E14;
+    border: 1.5px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 80;
+    opacity: 0.38;
+    transition: opacity 0.18s ease, transform 0.16s ease, background-color 0.16s ease;
+  }
+  .fab-add svg {
+    width: 22px;
+    height: 22px;
+    stroke: #0B0E14;
+    stroke-width: 2.5;
+  }
+  .fab-add:hover, .fab-add:active {
+    opacity: 0.95;
+    background: #6FB09D;
+    transform: scale(1.07);
+  }
+  /* প্রশ্ন বক্স */
+  .qbox {
+    position: absolute;
+    border: 1.8px solid #10B981;
+    background: rgba(16, 185, 129, 0.09);
+    border-radius: 3px;
+    cursor: move;
+    touch-action: none;
+  }
+  body.pan-locked .qbox {
+    pointer-events: none;
+  }
+  .qbox:hover {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: #059669;
+  }
+  .qbox.selected {
+    border: 2px solid #0EA5E9;
+    background: rgba(14, 165, 233, 0.15);
+    z-index: 30;
+    box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35);
+  }
+  .qbox-badge {
+    position: absolute;
+    top: 3px;
+    left: 4px;
+    background: rgba(16, 185, 129, 0.9);
+    color: #ffffff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1.5px 5px;
+    border-radius: 3px;
+    line-height: 1.15;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .qbox.selected .qbox-badge {
+    background: #0EA5E9;
+    color: #090C10;
+  }
+  .qbox-del {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    background: rgba(239, 68, 68, 0.9);
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 17px;
+    text-align: center;
+    border-radius: 3px;
+    cursor: pointer;
+    z-index: 40;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  body.phone-mode .qbox-del {
+    width: 24px;
+    height: 24px;
+    line-height: 23px;
+    font-size: 15px;
+  }
+  .qbox:hover .qbox-del, .qbox.selected .qbox-del {
+    opacity: 1;
+  }
+  .qbox-del:hover {
+    background: #DC2626;
+  }
+  /* বর্ডার রিসাইজ জোন (ফোন মোডে আঙুল দিয়ে ধরার জন্য আরও চওড়া) */
+  .edge { position: absolute; z-index: 35; }
+  .edge-n { top: -6px; left: 6px; right: 6px; height: 12px; cursor: ns-resize; }
+  .edge-s { bottom: -6px; left: 6px; right: 6px; height: 12px; cursor: ns-resize; }
+  .edge-w { left: -6px; top: 6px; bottom: 6px; width: 12px; cursor: ew-resize; }
+  .edge-e { right: -6px; top: 6px; bottom: 6px; width: 12px; cursor: ew-resize; }
+  .edge-nw { top: -7px; left: -7px; width: 14px; height: 14px; cursor: nwse-resize; }
+  .edge-ne { top: -7px; right: -7px; width: 14px; height: 14px; cursor: nesw-resize; }
+  .edge-sw { bottom: -7px; left: -7px; width: 14px; height: 14px; cursor: nesw-resize; }
+  .edge-se { bottom: -7px; right: -7px; width: 14px; height: 14px; cursor: nwse-resize; }
+
+  body.phone-mode .edge-n { top: -11px; height: 22px; }
+  body.phone-mode .edge-s { bottom: -11px; height: 22px; }
+  body.phone-mode .edge-w { left: -11px; width: 22px; }
+  body.phone-mode .edge-e { right: -11px; width: 22px; }
+  body.phone-mode .edge-nw, body.phone-mode .edge-ne,
+  body.phone-mode .edge-sw, body.phone-mode .edge-se { width: 22px; height: 22px; }
+
+  .edge-n::after, .edge-s::after {
+    content: ''; display: none; position: absolute;
+    left: calc(50% - 12px); top: 50%; transform: translateY(-50%);
+    width: 24px; height: 4px;
+    background: #0EA5E9; border-radius: 2px;
+  }
+  .edge-w::after, .edge-e::after {
+    content: ''; display: none; position: absolute;
+    top: calc(50% - 12px); left: 50%; transform: translateX(-50%);
+    width: 4px; height: 24px;
+    background: #0EA5E9; border-radius: 2px;
+  }
+  .qbox.selected .edge-n::after,
+  .qbox.selected .edge-s::after,
+  .qbox.selected .edge-w::after,
+  .qbox.selected .edge-e::after {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<div class="editor-shell" id="editorShell">
+  <div class="topbar">
+    <div class="nav-group">
+      <button class="btn" id="prevBtn" title="আগের পেজ">
+        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <div class="page-pill" id="pageIndicator">১ / ১</div>
+      <button class="btn" id="nextBtn" title="পরের পেজ">
+        <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+    </div>
+
+    <div class="action-group">
+      <button class="btn" id="multiToggleBtn" title="একাধিক বক্স সিলেক্ট">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+        <span>মাল্টি</span>
+      </button>
+      <button class="btn" id="selPageAllBtn" title="সব সিলেক্ট">
+        <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        <span>সব</span>
+      </button>
+      <button class="btn btn-save" id="saveBtn">
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        <span>সেভ</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="viewport-wrap">
+    <div class="viewport" id="viewport">
+      <div class="stage" id="stage">
+        <img id="pageImg" src="" alt="PDF Page" />
+        <div class="overlay" id="overlay"></div>
+      </div>
+    </div>
+
+    <!-- ফোন মোডে পিডিএফ জুম ও স্ক্রল লক কন্ট্রোলার -->
+    <div class="zoom-dock" id="zoomDock">
+      <button class="z-btn" id="zOutBtn" title="জুম আউট">−</button>
+      <span class="z-label" id="zLabel">100%</span>
+      <button class="z-btn" id="zInBtn" title="জুম ইন">+</button>
+      <button class="z-btn" id="panModeBtn" title="হাত দিয়ে পেজ স্ক্রল মোড (চালু থাকলে বক্স নড়বে না)">
+        <svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"></path><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"></path><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path></svg>
+      </button>
+    </div>
+
+    <button class="fab-add" id="fabAddBtn" title="নতুন বক্স">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   অংশ ১: গ্লোবাল ইউআই, পিসি ডান-পাশের স্প্লিট লেআউট ও বাবল বার্স্ট অ্যানিমেশন
+   ========================================================= */
+(function initGlobalParentUI() {
+  try {
+    const doc = window.parent.document;
+    const win = window.parent;
+
+    const syncLayoutAndDropzone = () => {
+      const spans = doc.querySelectorAll('[data-testid="stFileUploaderDropzoneInstructions"] div span');
+      if (spans.length > 0 && !spans[0].dataset.customized) {
+        spans[0].innerText = "পিডিএফ ফাইল ড্রপ করুন";
+        spans[0].dataset.customized = "true";
+      }
+
+      /* পিসি সংস্করণে বক্স এডিটরকে ডান পাশে স্থাপন এবং স্ক্যানের পর স্বয়ংক্রিয়ভাবে খোলা */
+      const blockCont = doc.querySelector('.block-container');
+      if (!blockCont) return;
+      const expander = blockCont.querySelector('[data-testid="stExpander"]');
+      const mode = doc.body.getAttribute('data-device-mode') || win.sessionStorage.getItem('ps_device_mode') || 'pc';
+
+      if (expander && mode !== 'phone' && win.innerWidth >= 960) {
+        blockCont.classList.add('ps-pc-split-active');
+        let wrapper = expander;
+        while (wrapper.parentElement && wrapper.parentElement !== blockCont && wrapper.parentElement.getAttribute('data-testid') !== 'stVerticalBlock') {
+          wrapper = wrapper.parentElement;
+        }
+        if (wrapper && wrapper.parentElement) {
+          wrapper.classList.add('ps-right-editor-panel');
+          wrapper.parentElement.classList.add('ps-main-split-grid');
+        }
+        const detailsEl = expander.querySelector('details');
+        if (detailsEl && !detailsEl.dataset.pcAutoOpened) {
+          detailsEl.dataset.pcAutoOpened = 'true';
+          if (!detailsEl.open) {
+            const summaryEl = detailsEl.querySelector('summary');
+            if (summaryEl) summaryEl.click();
+            else detailsEl.open = true;
+          }
+        }
+      } else {
+        blockCont.classList.remove('ps-pc-split-active');
+      }
+    };
+    setInterval(syncLayoutAndDropzone, 350);
+
+    function triggerBubbleBurst(cx, cy) {
+      const ring = doc.createElement('div');
+      ring.className = 'ps-burst-ring';
+      ring.style.left = cx + 'px';
+      ring.style.top = cy + 'px';
+      doc.body.appendChild(ring);
+
+      const particleCount = 14;
+      for (let i = 0; i < particleCount; i++) {
+        const p = doc.createElement('div');
+        p.className = 'ps-burst-droplet';
+        p.style.left = cx + 'px';
+        p.style.top = cy + 'px';
+        const angle = (Math.PI * 2 * i) / particleCount + (Math.random() * 0.3);
+        const dist = 55 + Math.random() * 65;
+        p.style.setProperty('--tx', Math.cos(angle) * dist + 'px');
+        p.style.setProperty('--ty', Math.sin(angle) * dist + 'px');
+        doc.body.appendChild(p);
+        setTimeout(() => p.remove(), 500);
+      }
+      setTimeout(() => ring.remove(), 500);
+    }
+
+    function applyDeviceMode(mode) {
+      win.sessionStorage.setItem('ps_device_mode', mode);
+      doc.body.setAttribute('data-device-mode', mode);
+      const fab = doc.getElementById('ps-mode-switcher-fab');
+      if (fab) {
+        fab.innerHTML = mode === 'phone'
+          ? '<svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>'
+          : '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>';
+      }
+      syncLayoutAndDropzone();
+    }
+
+    function showDeviceModal() {
+      if (doc.getElementById('ps-device-overlay')) return;
+      const overlay = doc.createElement('div');
+      overlay.id = 'ps-device-overlay';
+      overlay.innerHTML = `
+        <div class="ps-modal-bubble-card" id="ps-modal-card">
+          <h2 class="ps-modal-heading">Your Device Mode</h2>
+          <div class="ps-device-btn-row">
+            <button class="ps-device-orb" id="ps-choose-pc" title="PC Mode" aria-label="PC Mode">
+              <svg viewBox="0 0 24 24">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+            </button>
+            <button class="ps-device-orb" id="ps-choose-phone" title="Phone Mode" aria-label="Phone Mode">
+              <svg viewBox="0 0 24 24">
+                <rect x="5" y="2" width="14" height="20" rx="2.5" ry="2.5"></rect>
+                <line x1="12" y1="18" x2="12.01" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+      doc.body.appendChild(overlay);
+
+      const handlePick = (mode, btnEl) => {
+        const rect = btnEl.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+
+        btnEl.classList.add('ps-orb-bursting');
+        const card = doc.getElementById('ps-modal-card');
+        if (card) card.classList.add('ps-card-burst');
+        triggerBubbleBurst(cx, cy);
+        applyDeviceMode(mode);
+
+        setTimeout(() => {
+          overlay.classList.add('ps-overlay-vanish');
+        }, 110);
+        setTimeout(() => {
+          overlay.remove();
+        }, 520);
+      };
+
+      doc.getElementById('ps-choose-pc').addEventListener('click', function() {
+        handlePick('pc', this);
+      });
+      doc.getElementById('ps-choose-phone').addEventListener('click', function() {
+        handlePick('phone', this);
+      });
+    }
+
+    if (!doc.getElementById('ps-mode-switcher-fab')) {
+      const fab = doc.createElement('button');
+      fab.id = 'ps-mode-switcher-fab';
+      fab.title = 'Your Device Mode';
+      fab.addEventListener('click', showDeviceModal);
+      doc.body.appendChild(fab);
+    }
+
+    const savedMode = win.sessionStorage.getItem('ps_device_mode');
+    if (!savedMode) {
+      showDeviceModal();
+    } else {
+      applyDeviceMode(savedMode);
+    }
+  } catch (e) {}
+})();
+
+/* =========================================================
+   অংশ ২: ইন্টারঅ্যাক্টিভ ক্যানভাস ও বক্স এডিটর ইঞ্জিন
+   ========================================================= */
+const PAGES = {{PAGES_JSON}};
+let boxes = {{BOXES_JSON}};
+const STORAGE_PAGE_KEY = "ps_cur_page_{{SAFE_KEY}}";
+
+if (!PAGES || PAGES.length === 0) {
+  const shell = document.getElementById('editorShell');
+  if (shell) shell.style.display = 'none';
+} else {
+  let curPageIdx = 0;
+  try {
+    const savedIdx = parseInt(sessionStorage.getItem(STORAGE_PAGE_KEY), 10);
+    if (!isNaN(savedIdx) && savedIdx >= 0 && savedIdx < PAGES.length) {
+      curPageIdx = savedIdx;
+    }
+  } catch (e) {}
+
+  let selectedIds = new Set();
+  let multiSelectMode = false;
+  let panMode = false;
+  let zoomLevel = 1.0;
+  let nextId = 1;
+  boxes.forEach(b => { b._id = nextId++; b.keep = (b.keep !== false); });
+
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const pageIndicator = document.getElementById('pageIndicator');
+  const multiToggleBtn = document.getElementById('multiToggleBtn');
+  const selPageAllBtn = document.getElementById('selPageAllBtn');
+  const fabAddBtn = document.getElementById('fabAddBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const zOutBtn = document.getElementById('zOutBtn');
+  const zInBtn = document.getElementById('zInBtn');
+  const zLabel = document.getElementById('zLabel');
+  const panModeBtn = document.getElementById('panModeBtn');
+  const viewport = document.getElementById('viewport');
+  const stage = document.getElementById('stage');
+  const pageImg = document.getElementById('pageImg');
+  const overlay = document.getElementById('overlay');
+
+  function syncDeviceModeFromParent() {
+    try {
+      const parentBody = window.parent.document.body;
+      const mode = parentBody.getAttribute('data-device-mode')
+                || window.parent.sessionStorage.getItem('ps_device_mode')
+                || (window.innerWidth < 768 ? 'phone' : 'pc');
+      const isPhone = (mode === 'phone');
+      document.body.classList.toggle('phone-mode', isPhone);
+      if (isPhone && zoomLevel === 1.0 && !window._initPhoneZoomDone) {
+        window._initPhoneZoomDone = true;
+        setZoom(1.45);
+      } else if (!isPhone && window._initPhoneZoomDone) {
+        window._initPhoneZoomDone = false;
+        setZoom(1.0);
+      }
+    } catch (e) {}
+  }
+  setInterval(syncDeviceModeFromParent, 450);
+
+  function setZoom(newZoom) {
+    zoomLevel = Math.max(1.0, Math.min(3.0, Math.round(newZoom * 100) / 100));
+    const isPhone = document.body.classList.contains('phone-mode');
+    if (isPhone || zoomLevel > 1.0) {
+      stage.style.width = Math.round(zoomLevel * 100) + '%';
+      stage.style.maxWidth = 'none';
+    } else {
+      stage.style.width = '94%';
+      stage.style.maxWidth = '680px';
+    }
+    zLabel.textContent = Math.round(zoomLevel * 100) + '%';
+    setTimeout(renderBoxes, 30);
+  }
+
+  zOutBtn.addEventListener('click', () => setZoom(zoomLevel - 0.35));
+  zInBtn.addEventListener('click', () => setZoom(zoomLevel + 0.35));
+  zLabel.addEventListener('click', () => setZoom(1.0));
+
+  panModeBtn.addEventListener('click', () => {
+    panMode = !panMode;
+    panModeBtn.classList.toggle('pan-active', panMode);
+    document.body.classList.toggle('pan-locked', panMode);
+  });
+
+  let pinchStartDist = null;
+  let pinchStartZoom = 1.0;
+  viewport.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStartDist = Math.hypot(dx, dy);
+      pinchStartZoom = zoomLevel;
+    }
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && pinchStartDist) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const ratio = dist / Math.max(10, pinchStartDist);
+      setZoom(pinchStartZoom * ratio);
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  viewport.addEventListener('touchend', () => { pinchStartDist = null; });
+
+  function curPageObj() {
+    return PAGES[curPageIdx] || PAGES[0];
+  }
+
+  function getScale() {
+    const p = curPageObj();
+    if (!p) return { sx: 1, sy: 1 };
+    const w = pageImg.clientWidth || stage.clientWidth || 640;
+    const h = pageImg.clientHeight || (w * (p.h_pt / p.w_pt));
+    return { sx: w / p.w_pt, sy: h / p.h_pt };
+  }
+
+  function sortBoxes() {
+    const pMap = {};
+    PAGES.forEach(p => { pMap[p.page] = p; });
+    boxes.sort((a, b) => {
+      if (a.page !== b.page) return a.page - b.page;
+      const p = pMap[a.page];
+      const W = p ? p.w_pt : 595;
+      const H = p ? p.h_pt : 842;
+      if (W > 1.2 * H) {
+        if (Math.abs(a.y0 - b.y0) < 28) return a.x0 - b.x0;
+        return a.y0 - b.y0;
+      }
+      const colA = ((a.x1 - a.x0) > 0.6 * W || (a.x0 + a.x1) / 2 < W / 2) ? 0 : 1;
+      const colB = ((b.x1 - b.x0) > 0.6 * W || (b.x0 + b.x1) / 2 < W / 2) ? 0 : 1;
+      if (colA !== colB) return colA - colB;
+      return a.y0 - b.y0;
+    });
+  }
+
+  function updateNavUI() {
+    const p = curPageObj();
+    const totalBoxes = boxes.filter(b => b.keep !== false).length;
+    pageIndicator.textContent = p ? `${curPageIdx + 1}/${PAGES.length} • ${totalBoxes}টি` : '০/০';
+    prevBtn.disabled = (curPageIdx <= 0);
+    nextBtn.disabled = (curPageIdx >= PAGES.length - 1);
+  }
+
+  function renderBoxes() {
+    overlay.innerHTML = '';
+    const p = curPageObj();
+    if (!p) return;
+    const { sx, sy } = getScale();
+    sortBoxes();
+    updateNavUI();
+
+    let qNum = 0;
+    boxes.forEach(b => {
+      if (b.keep === false) return;
+      qNum++;
+      if (b.page !== p.page) return;
+
+      const el = document.createElement('div');
+      const isSel = selectedIds.has(b._id);
+      el.className = 'qbox' + (isSel ? ' selected' : '');
+      el.style.left = (b.x0 * sx) + 'px';
+      el.style.top = (b.y0 * sy) + 'px';
+      el.style.width = Math.max(18, (b.x1 - b.x0) * sx) + 'px';
+      el.style.height = Math.max(14, (b.y1 - b.y0) * sy) + 'px';
+      el.dataset.id = b._id;
+
+      const badge = document.createElement('div');
+      badge.className = 'qbox-badge';
+      badge.textContent = `#${qNum}`;
+      el.appendChild(badge);
+
+      const del = document.createElement('div');
+      del.className = 'qbox-del';
+      del.textContent = '×';
+      del.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        boxes = boxes.filter(item => item._id !== b._id);
+        selectedIds.delete(b._id);
+        renderBoxes();
+      });
+      el.appendChild(del);
+
+      ['n','s','w','e','nw','ne','sw','se'].forEach(dir => {
+        const ed = document.createElement('div');
+        ed.className = `edge edge-${dir}`;
+        ed.dataset.dir = dir;
+        el.appendChild(ed);
+      });
+
+      overlay.appendChild(el);
+    });
+  }
+
+  function showPage(idx) {
+    if (idx < 0 || idx >= PAGES.length) return;
+    curPageIdx = idx;
+    try { sessionStorage.setItem(STORAGE_PAGE_KEY, String(curPageIdx)); } catch (e) {}
+    selectedIds.clear();
+    const p = curPageObj();
+    pageImg.onload = () => { renderBoxes(); };
+    pageImg.src = 'data:image/jpeg;base64,' + p.img_b64;
+    viewport.scrollTop = 0;
+    updateNavUI();
+  }
+
+  prevBtn.addEventListener('click', () => showPage(curPageIdx - 1));
+  nextBtn.addEventListener('click', () => showPage(curPageIdx + 1));
+  window.addEventListener('resize', () => renderBoxes());
+
+  multiToggleBtn.addEventListener('click', () => {
+    multiSelectMode = !multiSelectMode;
+    multiToggleBtn.classList.toggle('active-multi', multiSelectMode);
+  });
+
+  selPageAllBtn.addEventListener('click', () => {
+    const p = curPageObj();
+    if (!p) return;
+    const pageBoxes = boxes.filter(b => b.page === p.page && b.keep !== false);
+    const allAlreadySelected = pageBoxes.length > 0 && pageBoxes.every(b => selectedIds.has(b._id));
+    if (allAlreadySelected) {
+      pageBoxes.forEach(b => selectedIds.delete(b._id));
+    } else {
+      pageBoxes.forEach(b => selectedIds.add(b._id));
+    }
+    renderBoxes();
+  });
+
+  function createBoxAtPosition(targetXPt, targetYPt) {
+    const p = curPageObj();
+    if (!p) return;
+    const W = p.w_pt, H = p.h_pt;
+    const y0 = Math.max(14, Math.min(H - 85, targetYPt - 18));
+    const y1 = Math.min(H - 12, y0 + 70);
+
+    let x0 = 18, x1 = Math.round(W * 0.485);
+    if (W > 1.2 * H) {
+      x0 = Math.max(20, Math.min(W - 260, targetXPt - 120));
+      x1 = Math.min(W - 20, x0 + 240);
+    } else {
+      const isRightCol = (targetXPt >= W * 0.5);
+      const sameColBoxes = boxes.filter(b => b.page === p.page && b.keep !== false && (((b.x0 + b.x1) * 0.5 >= W * 0.5) === isRightCol));
+      if (sameColBoxes.length > 0) {
+        const ref = sameColBoxes[sameColBoxes.length - 1];
+        x0 = ref.x0;
+        x1 = ref.x1;
+      } else if (isRightCol) {
+        x0 = Math.round(W * 0.515);
+        x1 = W - 18;
+      } else {
+        x0 = 18;
+        x1 = Math.round(W * 0.485);
+      }
+    }
+
+    const nb = {
+      _id: nextId++,
+      keep: true,
+      page: p.page,
+      x0: Math.round(x0 * 10) / 10,
+      y0: Math.round(y0 * 10) / 10,
+      x1: Math.round(x1 * 10) / 10,
+      y1: Math.round(y1 * 10) / 10
+    };
+    boxes.push(nb);
+    selectedIds.clear();
+    selectedIds.add(nb._id);
+    renderBoxes();
+  }
+
+  fabAddBtn.addEventListener('click', () => {
+    const p = curPageObj();
+    if (!p) return;
+    const { sx, sy } = getScale();
+    const centerY = (viewport.scrollTop + 200) / Math.max(0.1, sy);
+    const pageBoxes = boxes.filter(b => b.page === p.page && b.keep !== false);
+    const lastX = pageBoxes.length > 0 ? (pageBoxes[pageBoxes.length - 1].x0 + 20) : (p.w_pt * 0.25);
+    createBoxAtPosition(lastX, centerY);
+  });
+
+  overlay.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.qbox')) return;
+    const p = curPageObj();
+    if (!p) return;
+    const { sx, sy } = getScale();
+    const rect = overlay.getBoundingClientRect();
+    const clickX = (e.clientX - rect.left) / sx;
+    const clickY = (e.clientY - rect.top) / sy;
+    createBoxAtPosition(clickX, clickY);
+    e.preventDefault();
+  });
+
+  let activeDrag = null;
+
+  overlay.addEventListener('pointerdown', (e) => {
+    if (panMode || e.button !== 0) return;
+    if (e.target.closest('.qbox-del')) return;
+    const p = curPageObj();
+    if (!p) return;
+
+    const boxEl = e.target.closest('.qbox');
+    if (!boxEl) {
+      if (!multiSelectMode && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        selectedIds.clear();
+        renderBoxes();
+      }
+      return;
+    }
+
+    const id = parseInt(boxEl.dataset.id, 10);
+    const b = boxes.find(x => x._id === id);
+    if (!b) return;
+
+    const edgeEl = e.target.closest('.edge');
+    const isAdditive = multiSelectMode || e.shiftKey || e.ctrlKey || e.metaKey;
+
+    if (isAdditive && !edgeEl) {
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+        renderBoxes();
+        return;
+      } else {
+        selectedIds.add(id);
+      }
+    } else if (!selectedIds.has(id)) {
+      selectedIds.clear();
+      selectedIds.add(id);
+    }
+
+    const { sx, sy } = getScale();
+    const rect = overlay.getBoundingClientRect();
+    const startX = (e.clientX - rect.left) / sx;
+    const startY = (e.clientY - rect.top) / sy;
+
+    const groupBoxes = boxes.filter(item => selectedIds.has(item._id) && item.page === p.page && item.keep !== false);
+    const origMap = {};
+    groupBoxes.forEach(gb => {
+      origMap[gb._id] = { x0: gb.x0, y0: gb.y0, x1: gb.x1, y1: gb.y1 };
+    });
+
+    activeDrag = {
+      pointerId: e.pointerId,
+      mode: edgeEl ? 'resize' : 'move',
+      dir: edgeEl ? edgeEl.dataset.dir : '',
+      group: groupBoxes,
+      origMap: origMap,
+      startX: startX,
+      startY: startY
+    };
+
+    renderBoxes();
+    try { overlay.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+
+  overlay.addEventListener('pointermove', (e) => {
+    if (!activeDrag || e.pointerId !== activeDrag.pointerId) return;
+    const p = curPageObj();
+    if (!p) return;
+    const { sx, sy } = getScale();
+    const rect = overlay.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / sx;
+    const my = (e.clientY - rect.top) / sy;
+    const dx = mx - activeDrag.startX;
+    const dy = my - activeDrag.startY;
+
+    activeDrag.group.forEach(gb => {
+      const orig = activeDrag.origMap[gb._id];
+      if (!orig) return;
+
+      if (activeDrag.mode === 'move') {
+        const w = orig.x1 - orig.x0;
+        const h = orig.y1 - orig.y0;
+        gb.x0 = Math.max(0, Math.min(p.w_pt - w, orig.x0 + dx));
+        gb.y0 = Math.max(0, Math.min(p.h_pt - h, orig.y0 + dy));
+        gb.x1 = gb.x0 + w;
+        gb.y1 = gb.y0 + h;
+      } else if (activeDrag.mode === 'resize') {
+        const d = activeDrag.dir;
+        let x0 = orig.x0, y0 = orig.y0, x1 = orig.x1, y1 = orig.y1;
+        if (d.includes('w')) x0 = Math.min(x1 - 20, Math.max(0, x0 + dx));
+        if (d.includes('e')) x1 = Math.max(x0 + 20, Math.min(p.w_pt, x1 + dx));
+        if (d.includes('n')) y0 = Math.min(y1 - 12, Math.max(0, y0 + dy));
+        if (d.includes('s')) y1 = Math.max(y0 + 12, Math.min(p.h_pt, y1 + dy));
+        gb.x0 = x0; gb.y0 = y0; gb.x1 = x1; gb.y1 = y1;
+      }
+
+      const domBox = overlay.querySelector(`.qbox[data-id="${gb._id}"]`);
+      if (domBox) {
+        domBox.style.left = (gb.x0 * sx) + 'px';
+        domBox.style.top = (gb.y0 * sy) + 'px';
+        domBox.style.width = Math.max(18, (gb.x1 - gb.x0) * sx) + 'px';
+        domBox.style.height = Math.max(14, (gb.y1 - gb.y0) * sy) + 'px';
+      }
+    });
+  });
+
+  function endPointerDrag(e) {
+    if (!activeDrag || (e && e.pointerId !== activeDrag.pointerId)) return;
+    try { overlay.releasePointerCapture(activeDrag.pointerId); } catch (err) {}
+    activeDrag = null;
+    renderBoxes();
+  }
+
+  overlay.addEventListener('pointerup', endPointerDrag);
+  overlay.addEventListener('pointercancel', endPointerDrag);
+
+  window.addEventListener('keydown', (e) => {
+    if (selectedIds.size > 0 && (e.key === 'Delete' || e.key === 'Backspace')) {
+      boxes = boxes.filter(b => !selectedIds.has(b._id));
+      selectedIds.clear();
+      renderBoxes();
+      e.preventDefault();
+    }
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const origHTML = saveBtn.innerHTML;
+    saveBtn.textContent = 'সেভ হচ্ছে...';
+    try {
+      sortBoxes();
+      const clean = boxes.filter(b => b.keep !== false).map(b => ({
+        keep: true,
+        page: b.page,
+        x0: Math.round(b.x0 * 10) / 10,
+        y0: Math.round(b.y0 * 10) / 10,
+        x1: Math.round(b.x1 * 10) / 10,
+        y1: Math.round(b.y1 * 10) / 10
+      }));
+      const payload = JSON.stringify({ ts: Date.now(), boxes: clean });
+      const parentDoc = window.parent.document;
+      const inp = parentDoc.querySelector('input[placeholder="BOX_JSON_BRIDGE_MARKER"]')
+               || parentDoc.querySelector('input[aria-label="BOX_JSON_BRIDGE"]');
+      if (inp) {
+        const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
+        inp.focus();
+        setter.call(inp, payload);
+        inp.dispatchEvent(new window.parent.Event('input', { bubbles: true }));
+        inp.dispatchEvent(new window.parent.Event('change', { bubbles: true }));
+        inp.dispatchEvent(new window.parent.KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+        }));
+        inp.blur();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setTimeout(() => {
+      saveBtn.innerHTML = origHTML;
+    }, 900);
+  });
+
+  syncDeviceModeFromParent();
+  showPage(curPageIdx);
+}
+</script>
+</body>
+</html>

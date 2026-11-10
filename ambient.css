@@ -1,0 +1,115 @@
+/* =========================================================
+   ambient.css  —  নরম ঝাপসা চলমান ব্যাকগ্রাউন্ড + ছোট কন্ট্রোল বাটন
+   (নতুন ফাইল: style.css বা app.py এর কোনো পুরোনো লাইন বদলায়নি)
+   বন্ধ করতে: নিচের বাম কোণের "ব্যাকগ্রাউন্ড" বাটন, বা এই ফাইলটি মুছে দিন।
+   ========================================================= */
+
+:root {
+    --amb-a: 94, 158, 139;    /* sage (অ্যাকসেন্টের সাথে মেলানো) */
+    --amb-b: 70, 112, 168;    /* ঠান্ডা নীল */
+    --amb-c: 120, 96, 170;    /* হালকা বেগুনি */
+}
+
+/* .stApp কে আলাদা stacking context বানানো, যাতে ব্লবগুলো
+   ব্যাকগ্রাউন্ডের ঠিক উপরে কিন্তু কনটেন্টের নিচে থাকে */
+.stApp {
+    isolation: isolate;
+}
+
+.stApp::before,
+.stApp::after {
+    content: "";
+    position: fixed;
+    inset: -25%;
+    z-index: -1;
+    pointer-events: none;
+    will-change: transform;
+}
+
+.stApp::before {
+    background:
+        radial-gradient(38% 38% at 22% 28%, rgba(var(--amb-a), 0.17), transparent 70%),
+        radial-gradient(32% 32% at 78% 72%, rgba(var(--amb-b), 0.13), transparent 70%);
+    animation: psAmbDriftA 42s ease-in-out infinite alternate;
+}
+
+.stApp::after {
+    background:
+        radial-gradient(34% 34% at 72% 24%, rgba(var(--amb-c), 0.10), transparent 70%),
+        radial-gradient(40% 40% at 30% 80%, rgba(var(--amb-a), 0.11), transparent 70%);
+    animation: psAmbDriftB 58s ease-in-out infinite alternate;
+}
+
+@keyframes psAmbDriftA {
+    0%   { transform: translate3d(-3%, -2%, 0) scale(1); }
+    50%  { transform: translate3d(4%, 3%, 0) scale(1.08); }
+    100% { transform: translate3d(-2%, 5%, 0) scale(1.03); }
+}
+
+@keyframes psAmbDriftB {
+    0%   { transform: translate3d(3%, 4%, 0) scale(1.05); }
+    50%  { transform: translate3d(-4%, -2%, 0) scale(1); }
+    100% { transform: translate3d(2%, -4%, 0) scale(1.09); }
+}
+
+/* ফোন মোডে হালকা: একটি স্তর, ধীর গতি (ব্যাটারি ও ল্যাগ বাঁচাতে) */
+body[data-device-mode="phone"] .stApp::after {
+    display: none;
+}
+body[data-device-mode="phone"] .stApp::before {
+    animation-duration: 70s;
+}
+
+/* ব্যবহারকারী সিস্টেমে "reduce motion" চালু রাখলে নড়াচড়া বন্ধ */
+@media (prefers-reduced-motion: reduce) {
+    .stApp::before,
+    .stApp::after {
+        animation: none;
+    }
+}
+
+/* হাতে বন্ধ করলে */
+body.ps-ambient-off .stApp::before,
+body.ps-ambient-off .stApp::after {
+    display: none;
+}
+
+/* ---------- নিচের বাম কোণের ছোট কন্ট্রোল (ডিভাইস-মোড বাটনের পাশে) ---------- */
+.ps-ctl-btn {
+    position: fixed;
+    bottom: 16px;
+    z-index: 99990;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(18, 23, 33, 0.78);
+    border: 1px solid rgba(94, 158, 139, 0.35);
+    backdrop-filter: blur(8px);
+    color: #6FB09D;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.55;
+    padding: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+.ps-ctl-btn:hover {
+    opacity: 1;
+    transform: scale(1.08);
+}
+.ps-ctl-btn svg {
+    width: 17px;
+    height: 17px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.ps-ctl-btn.ps-off {
+    color: #5b6573;
+    border-color: rgba(255, 255, 255, 0.10);
+}
+#ps-sfx-ctl { left: 60px; }
+#ps-amb-ctl { left: 104px; }

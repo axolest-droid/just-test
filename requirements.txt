@@ -1,0 +1,6 @@
+streamlit
+pymupdf
+opencv-python-headless
+numpy
+pandas
+pytesseract
