@@ -21,7 +21,7 @@
   var LEVEL_NAMES = ['বন্ধ', 'নিচু', 'মাঝারি', 'জোরে'];
   var level = parseInt(lsGet('ps_sfx_level_v2', '2'), 10);
   if (isNaN(level) || level < 0 || level > 3) level = 2;
-  var ambOn = lsGet('ps_amb_on', '1') === '1';
+  var ambOn = true;   /* কুয়াশা সবসময় চালু (বন্ধ করার বাটন নেই) */
   var lastSaveAt = 0;
 
   /* ---------- অডিও ইঞ্জিন ---------- */
@@ -273,7 +273,6 @@
     var w3 = '<path d="M21.5 4.5a12 12 0 0 1 0 15"></path>';
     return SVG_OPEN + spk + w1 + (level >= 2 ? w2 : '') + (level >= 3 ? w3 : '') + '</svg>';
   }
-  var AMB_ICON = SVG_OPEN + '<polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
 
   function updateControls() {
     var s = D.getElementById('ps-sfx-ctl');
@@ -282,16 +281,13 @@
       s.classList.toggle('ps-off', level === 0);
       s.title = 'সাউন্ড: ' + LEVEL_NAMES[level] + ' (ক্লিক করে বদলান)';
     }
-    var a = D.getElementById('ps-amb-ctl');
-    if (a) {
-      a.classList.toggle('ps-off', !ambOn);
-      a.title = 'ব্যাকগ্রাউন্ড অ্যানিমেশন: ' + (ambOn ? 'চালু' : 'বন্ধ');
-    }
     if (D.body) D.body.classList.toggle('ps-ambient-off', !ambOn);
   }
 
   function buildControls() {
     if (!D.body) return;
+    var oldAmb = D.getElementById('ps-amb-ctl');
+    if (oldAmb && oldAmb.parentNode) oldAmb.parentNode.removeChild(oldAmb);
     if (!D.getElementById('ps-sfx-ctl')) {
       var s = D.createElement('button');
       s.id = 'ps-sfx-ctl'; s.className = 'ps-ctl-btn'; s.type = 'button';
@@ -300,18 +296,6 @@
         if (level > 0) play('on');
       });
       D.body.appendChild(s);
-    }
-    if (!D.getElementById('ps-amb-ctl')) {
-      var a = D.createElement('button');
-      a.id = 'ps-amb-ctl'; a.className = 'ps-ctl-btn'; a.type = 'button';
-      a.innerHTML = AMB_ICON;
-      a.addEventListener('click', function () {
-        ambOn = !ambOn;
-        lsSet('ps_amb_on', ambOn ? '1' : '0');
-        updateControls();
-        play(ambOn ? 'on' : 'soft');
-      });
-      D.body.appendChild(a);
     }
     updateControls();
   }
@@ -337,7 +321,7 @@
     var reduce = false;
     try { reduce = W.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
-    var COLS = [[94, 158, 139], [70, 112, 168], [120, 96, 170], [94, 158, 139], [86, 140, 170]];
+    var COLS = [[84, 140, 124], [66, 100, 138], [84, 140, 124], [72, 112, 128], [92, 82, 128]];
     var puffs = [], wisps = [];
     var N = 16;
 
@@ -348,11 +332,11 @@
       for (var i = 0; i < N; i++) {
         puffs.push({
           hx: rnd(0, 1), hy: rnd(0, 1),            /* ঘরের অবস্থান (0..1) */
-          ax: rnd(0.06, 0.16), ay: rnd(0.05, 0.14),/* ভেসে বেড়ানোর পরিসর */
-          sx: rnd(0.025, 0.06), sy: rnd(0.02, 0.05),/* গতি */
+          ax: rnd(0.04, 0.10), ay: rnd(0.03, 0.09),/* ভেসে বেড়ানোর পরিসর */
+          sx: rnd(0.005, 0.012), sy: rnd(0.004, 0.010),/* গতি */
           px: rnd(0, 6.28), py: rnd(0, 6.28),
           r: rnd(0.28, 0.5),                       /* ব্যাসার্ধ (পর্দার বড় দিকের অনুপাতে) */
-          a: rnd(0.22, 0.36),                      /* ঘনত্ব */
+          a: rnd(0.065, 0.115),                      /* ঘনত্ব */
           col: COLS[i % COLS.length],
           ox: 0, oy: 0, vx: 0, vy: 0               /* স্পর্শে সরে যাওয়া */
         });
@@ -390,8 +374,8 @@
         var reach = p.r * mx / W.innerHeight * 0.9;
         if (d < reach) {
           var k = (1 - d / reach);
-          p.vx += dx * k * 1.1 + (-ddx / (d + 0.05)) * k * sp * 0.25 / asp;
-          p.vy += dy * k * 1.1 + (-ddy / (d + 0.05)) * k * sp * 0.25;
+          p.vx += dx * k * 0.7 + (-ddx / (d + 0.05)) * k * sp * 0.25 / asp;
+          p.vy += dy * k * 0.7 + (-ddy / (d + 0.05)) * k * sp * 0.25;
         }
       }
       /* আঙুলের পিছনে হালকা কুয়াশার রেখা */
@@ -438,8 +422,8 @@
       for (var i = 0; i < cnt; i++) {
         var p = puffs[i];
         /* স্প্রিং: সরে গিয়ে ধীরে ফিরে আসে (নরম, দোলাহীন) */
-        p.vx += -p.ox * 0.0032; p.vy += -p.oy * 0.0032;
-        p.vx *= 0.955; p.vy *= 0.955;
+        p.vx += -p.ox * 0.0022; p.vy += -p.oy * 0.0022;
+        p.vx *= 0.965; p.vy *= 0.965;
         p.ox += p.vx; p.oy += p.vy;
         var lim = 0.35;
         if (p.ox > lim) p.ox = lim; else if (p.ox < -lim) p.ox = -lim;
@@ -447,7 +431,7 @@
 
         var x = (p.hx + p.ax * Math.sin(t * p.sx * 6.283 + p.px) + p.ox) * w;
         var y = (p.hy + p.ay * Math.sin(t * p.sy * 6.283 + p.py) + p.oy) * h;
-        var br = 1 + 0.07 * Math.sin(t * 0.18 + p.px);          /* ধীরে "শ্বাস" */
+        var br = 1 + 0.05 * Math.sin(t * 0.05 + p.px);          /* ধীরে "শ্বাস" */
         blob(x, y, p.r * mx * br, p.col, p.a);
       }
 
@@ -457,7 +441,7 @@
         q.vx *= 0.97; q.vy *= 0.97;
         q.life -= 0.010;
         if (q.life <= 0) { wisps.splice(j, 1); continue; }
-        blob(q.x * w, q.y * h, q.r * mx * (1.4 - q.life * 0.4), q.col, 0.20 * q.life);
+        blob(q.x * w, q.y * h, q.r * mx * (1.4 - q.life * 0.4), q.col, 0.07 * q.life);
       }
     }
     W.requestAnimationFrame(frame);
