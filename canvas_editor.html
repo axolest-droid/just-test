@@ -460,36 +460,119 @@
     const doc = window.parent.document;
     const win = window.parent;
 
-    const syncLayoutAndDropzone = () => {
+  const syncLayoutAndDropzone = () => {
       const spans = doc.querySelectorAll('[data-testid="stFileUploaderDropzoneInstructions"] div span');
       if (spans.length > 0 && !spans[0].dataset.customized) {
         spans[0].innerText = "পিডিএফ ফাইল ড্রপ করুন";
         spans[0].dataset.customized = "true";
       }
 
-      /* পিসি সংস্করণে বক্স এডিটরকে ডান পাশে স্থাপন এবং স্ক্যানের পর স্বয়ংক্রিয়ভাবে খোলা */
+      /* নতুন স্ক্যান বাটনে ক্লিক করলে আবার বক্স এডিটরকে ডিফল্ট ট্যাব করা */
+      doc.querySelectorAll('button').forEach(btn => {
+        if (!btn.dataset.scanHooked && (btn.innerText || '').includes('স্ক্যান করুন')) {
+          btn.dataset.scanHooked = 'true';
+          btn.addEventListener('click', () => {
+            win.sessionStorage.setItem('ps_active_right_tab', 'box');
+          });
+        }
+      });
+
+      /* পিসি সংস্করণে ডান পাশে দুটি ড্রপডাউন স্থাপন এবং অটো-সুইচ (Accordion) নিয়ন্ত্রণ */
       const blockCont = doc.querySelector('.block-container');
       if (!blockCont) return;
-      const expander = blockCont.querySelector('[data-testid="stExpander"]');
+      const expanders = blockCont.querySelectorAll('[data-testid="stExpander"]');
       const mode = doc.body.getAttribute('data-device-mode') || win.sessionStorage.getItem('ps_device_mode') || 'pc';
 
-      if (expander && mode !== 'phone' && win.innerWidth >= 960) {
+      if (expanders.length > 0 && mode !== 'phone' && win.innerWidth >= 960) {
         blockCont.classList.add('ps-pc-split-active');
-        let wrapper = expander;
-        while (wrapper.parentElement && wrapper.parentElement !== blockCont && wrapper.parentElement.getAttribute('data-testid') !== 'stVerticalBlock') {
-          wrapper = wrapper.parentElement;
+        const mainVBlock = blockCont.querySelector('[data-testid="stVerticalBlock"]');
+        if (mainVBlock) {
+          mainVBlock.classList.add('ps-main-split-grid');
+          let wrapper = expanders[0];
+          while (wrapper.parentElement && wrapper.parentElement !== mainVBlock) {
+            wrapper = wrapper.parentElement;
+          }
+          if (wrapper && wrapper.parentElement === mainVBlock) {
+            wrapper.classList.add('ps-right-editor-panel');
+          }
         }
-        if (wrapper && wrapper.parentElement) {
-          wrapper.classList.add('ps-right-editor-panel');
-          wrapper.parentElement.classList.add('ps-main-split-grid');
+
+        const boxDetails = expanders[0] ? expanders[0].querySelector('details') : null;
+        const gapDetails = expanders[1] ? expanders[1].querySelector('details') : null;
+        const activeTab = win.sessionStorage.getItem('ps_active_right_tab') || 'box';
+
+        /* ম্যানুয়ালি একটি ড্রপডাউনে ক্লিক করলে অপরটি বন্ধ করার লিসেনার */
+        if (boxDetails && !boxDetails.dataset.tabHooked) {
+          boxDetails.dataset.tabHooked = 'true';
+          const boxSum = boxDetails.querySelector('summary');
+          if (boxSum) {
+            boxSum.addEventListener('click', () => {
+              setTimeout(() => {
+                if (boxDetails.open) {
+                  win.sessionStorage.setItem('ps_active_right_tab', 'box');
+                  if (gapDetails && gapDetails.open) {
+                    const gs = gapDetails.querySelector('summary');
+                    if (gs) gs.click();
+                    gapDetails.open = false;
+                  }
+                }
+              }, 30);
+            });
+          }
         }
-        const detailsEl = expander.querySelector('details');
-        if (detailsEl && !detailsEl.dataset.pcAutoOpened) {
-          detailsEl.dataset.pcAutoOpened = 'true';
-          if (!detailsEl.open) {
-            const summaryEl = detailsEl.querySelector('summary');
-            if (summaryEl) summaryEl.click();
-            else detailsEl.open = true;
+
+        if (gapDetails && !gapDetails.dataset.tabHooked) {
+          gapDetails.dataset.tabHooked = 'true';
+          const gapSum = gapDetails.querySelector('summary');
+          if (gapSum) {
+            gapSum.addEventListener('click', () => {
+              setTimeout(() => {
+                if (gapDetails.open) {
+                  win.sessionStorage.setItem('ps_active_right_tab', 'gap');
+                  if (boxDetails && boxDetails.open) {
+                    const bs = boxDetails.querySelector('summary');
+                    if (bs) bs.click();
+                    boxDetails.open = false;
+                  }
+                }
+              }, 30);
+            });
+          }
+        }
+
+        /* স্ক্যানের পর বা সেভ বাটনে ক্লিকের পর নির্দিষ্ট ড্রপডাউন খোলা ও অপরটি বন্ধ রাখা */
+        if (boxDetails && gapDetails) {
+          if (activeTab === 'gap' && boxDetails.dataset.appliedTab !== 'gap') {
+            boxDetails.dataset.appliedTab = 'gap';
+            if (boxDetails.open) {
+              const bs = boxDetails.querySelector('summary');
+              if (bs) bs.click();
+              boxDetails.open = false;
+            }
+            if (!gapDetails.open) {
+              const gs = gapDetails.querySelector('summary');
+              if (gs) gs.click();
+              else gapDetails.open = true;
+            }
+          } else if (activeTab === 'box' && boxDetails.dataset.appliedTab !== 'box') {
+            boxDetails.dataset.appliedTab = 'box';
+            if (gapDetails.open) {
+              const gs = gapDetails.querySelector('summary');
+              if (gs) gs.click();
+              gapDetails.open = false;
+            }
+            if (!boxDetails.open) {
+              const bs = boxDetails.querySelector('summary');
+              if (bs) bs.click();
+              else boxDetails.open = true;
+            }
+          }
+        } else if (boxDetails && !boxDetails.dataset.pcAutoOpened) {
+          boxDetails.dataset.pcAutoOpened = 'true';
+          if (!boxDetails.open) {
+            const bs = boxDetails.querySelector('summary');
+            if (bs) bs.click();
+            else boxDetails.open = true;
           }
         }
       } else {
@@ -1049,7 +1132,7 @@ if (!PAGES || PAGES.length === 0) {
     }
   } catch (err) {}
 
-  saveBtn.addEventListener('click', () => {
+saveBtn.addEventListener('click', () => {
     const origHTML = saveBtn.innerHTML;
     saveBtn.textContent = 'সেভ হচ্ছে...';
     try {
@@ -1064,6 +1147,21 @@ if (!PAGES || PAGES.length === 0) {
       }));
       const payload = JSON.stringify({ ts: Date.now(), boxes: clean });
       const parentDoc = window.parent.document;
+      const parentWin = window.parent;
+
+      /* পিসি মোডে সেভ বাটনে ক্লিক করলে বক্স এডিটর বন্ধ করে গ্যাপ সেটআপ খোলার সিগন্যাল */
+      const mode = parentDoc.body.getAttribute('data-device-mode')
+                || parentWin.sessionStorage.getItem('ps_device_mode')
+                || 'pc';
+      if (mode !== 'phone' && parentWin.innerWidth >= 960) {
+        parentWin.sessionStorage.setItem('ps_active_right_tab', 'gap');
+        const exps = parentDoc.querySelectorAll('.block-container [data-testid="stExpander"]');
+        if (exps.length >= 2) {
+          const bDet = exps[0].querySelector('details');
+          if (bDet) bDet.dataset.appliedTab = '';
+        }
+      }
+
       const inp = parentDoc.querySelector('input[placeholder="BOX_JSON_BRIDGE_MARKER"]')
                || parentDoc.querySelector('input[aria-label="BOX_JSON_BRIDGE"]');
       if (inp) {
