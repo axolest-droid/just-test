@@ -1170,58 +1170,95 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
 def render_learning_suggestions():
-    """বক্স এডিটরের সংশোধন থেকে পাওয়া নতুন প্যাটার্নগুলো পিন যাচাইয়ের মাধ্যমে গিটহাবে সেভ করার কার্ড।"""
+    """একটি স্থির ও মিনিমাল বক্সে একটার পর একটা প্যাটার্ন দেখানোর ক্যারোসেল কার্ড।"""
     suggestions = st.session_state.get("rv_suggestions", [])
     if not suggestions:
         return
 
+    total = len(suggestions)
+    idx = st.session_state.get("rv_sug_idx", 0)
+    if idx >= total:
+        idx = max(0, total - 1)
+    if idx < 0:
+        idx = 0
+    st.session_state["rv_sug_idx"] = idx
+
+    sug = suggestions[idx]
     is_unlocked = st.session_state.get("is_admin_unlocked", False)
 
-    # একের অধিক বা যেকোনো প্যাটার্ন থাকলে এক ক্লিকে সব মোছার বাটন
-    top_c1, top_c2 = st.columns([3, 2])
-    with top_c1:
-        st.markdown(f"**🧠 নতুন প্যাটার্ন শনাক্ত হয়েছে ({len(suggestions)}টি)**")
-    with top_c2:
-        if st.button("🗑️ সবগুলো একসাথে মুছুন", key="sug_clear_all_btn", use_container_width=True):
-            st.session_state["rv_suggestions"] = []
-            st.rerun()
+    type_map = {
+        "question_tags": "প্রশ্ন ট্যাগ",
+        "solution_tags": "সমাধান ট্যাগ",
+        "header_noise_patterns": "জলছাপ"
+    }
+    short_type = type_map.get(sug.get("type"), "প্যাটার্ন")
+    disp_pat = sug.get("display_pattern", sug.get("pattern", ""))
+    box_txt = f"বক্স #{sug['box_no']}" if sug.get("box_no") else f"পৃষ্ঠা {sug.get('page', 1)}"
+    sample_txt = sug.get("sample", "")
 
-    for idx, sug in enumerate(list(suggestions)):
-        box_badge = f" `[বক্স #{sug['box_no']}]`" if sug.get("box_no") else ""
-        st.info(f"🧠 **প্যাটার্ন #{idx + 1}{box_badge}:** {sug['prompt']}\n\n*(নমুনা লাইন: `{sug.get('sample', '')}`)*")
+    with st.container():
+        st.markdown(f"""
+        <div class="ps-sug-card">
+            <div class="ps-sug-top">
+                <div class="ps-sug-badges">
+                    <span class="ps-sug-box">{box_txt}</span>
+                    <span class="ps-sug-type">{short_type}</span>
+                    <span class="ps-sug-pat">{disp_pat}</span>
+                </div>
+                <span class="ps-sug-count">{idx + 1} / {total}</span>
+            </div>
+            <div class="ps-sug-sample">{sample_txt}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
         pin_val = ""
         if not is_unlocked:
             pin_val = st.text_input(
-                "গিটহাবে সেভ করতে অ্যাডমিন পিন দিন",
+                "পিন",
                 type="password",
-                placeholder="অ্যাডমিন পিন লিখুন...",
-                key=f"sug_pin_{idx}_{sug['pattern']}"
+                placeholder="🔒 পিন...",
+                key=f"sug_pin_{idx}_{sug['pattern']}",
+                label_visibility="collapsed"
             )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ হ্যাঁ, গিটহাবে সেভ করুন", key=f"sug_yes_{idx}_{sug['pattern']}"):
+        b1, b2, b3, b4, b5 = st.columns([1, 1, 1.6, 1.4, 1.4])
+        with b1:
+            if st.button("❮", key="sug_prev_btn", disabled=(idx <= 0), help="আগেরটি"):
+                st.session_state["rv_sug_idx"] = idx - 1
+                st.rerun()
+        with b2:
+            if st.button("❯", key="sug_next_btn", disabled=(idx >= total - 1), help="পরেরটি"):
+                st.session_state["rv_sug_idx"] = idx + 1
+                st.rerun()
+        with b3:
+            if st.button("✓ সেভ", key=f"sug_yes_{idx}_{sug['pattern']}", help="গিটহাবে সেভ"):
                 if is_unlocked or verify_admin_pin(pin_val):
                     st.session_state["is_admin_unlocked"] = True
                     ok, msg = commit_rule_to_kb(
                         sug["type"],
                         sug["pattern"],
-                        f"Learned {sug['type']} from user box edit on page {sug['page']} (Box #{sug.get('box_no', '?')})"
+                        f"Learned {sug['type']} (Box #{sug.get('box_no', '?')})"
                     )
                     suggestions.pop(idx)
                     st.session_state["rv_suggestions"] = suggestions
+                    st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
                     if ok:
-                        st.success(msg)
+                        st.toast("সেভ হয়েছে!")
                     else:
                         st.warning(msg)
                     st.rerun()
                 else:
-                    st.error("ভুল অ্যাডমিন পিন! সঠিক পিন ছাড়া গিটহাবে সেভ করা যাবে না।")
-        with c2:
-            if st.button("❌ বাদ দিন", key=f"sug_no_{idx}_{sug['pattern']}"):
+                    st.error("ভুল পিন!")
+        with b4:
+            if st.button("✕ বাদ", key=f"sug_no_{idx}_{sug['pattern']}", help="এটি বাদ দিন"):
                 suggestions.pop(idx)
                 st.session_state["rv_suggestions"] = suggestions
+                st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
+                st.rerun()
+        with b5:
+            if st.button("🗑 সব", key="sug_clear_all_btn", help="সব মুছুন"):
+                st.session_state["rv_suggestions"] = []
+                st.session_state["rv_sug_idx"] = 0
                 st.rerun()
 
 def render_results_and_review(raw_pdf, file_key):
