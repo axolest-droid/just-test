@@ -97,7 +97,8 @@
     "ACS\\s*Varsity",
     "ACS\\s*Chemistry",
     "ACS\\s*Cliemistry",
-    "the\\ inequality:\\ x\\ 2\\ −5x\\ \\+\\ 4\\ ​\\ >\\ x\\ −2\\ \\)"
+    "the\\ inequality:\\ x\\ 2\\ −5x\\ \\+\\ 4\\ ​\\ >\\ x\\ −2\\ \\)",
+    "বিগত\\ ভর্তি\\ Written"
   ],
   "bullet_stop_chars": [
     "➢",
@@ -196,7 +197,8 @@
     "max_question_number": 160,
     "min_start_gap_pt": 16.0,
     "max_q_x_offset": 52.0,
-    "max_sol_x_offset": 120.0
+    "max_sol_x_offset": 120.0,
+    "max_internal_blank_gap_pt": 24.0
   },
   "_ai_instructions": {
     "purpose": "Central Knowledge Base & Rule Engine for SMART SCANNER PDF Question Extractor.",
