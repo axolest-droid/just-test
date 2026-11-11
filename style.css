@@ -152,28 +152,32 @@ body[data-device-mode="phone"] [data-testid="stExpander"] details summary {
    "Your Device Mode" গ্লাসমরফিক পর্দা ও বাবল বার্স্ট অ্যানিমেশন
    ========================================================= */
 #ps-device-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 999999;
-    display: flex;
-    align-items: center;
-    jstify-content: center;
-    background: rgba(8, 11, 16, 0.58);
-    backdrop-filter: blur(22px) saturate(160%);
-    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 999999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(8, 11, 16, 0.58) !important;
+    backdrop-filter: blur(22px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(160%) !important;
     opacity: 1;
     transition: opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1), backdrop-filter 0.42s ease;
 }
 
 #ps-device-overlay.ps-overlay-vanish {
-    opacity: 0;
-    backdrop-filter: blur(0px);
-    -webkit-backdrop-filter: blur(0px);
-    pointer-events: none;
+    opacity: 0 !important;
+    backdrop-filter: blur(0px) !important;
+    -webkit-backdrop-filter: blur(0px) !important;
+    pointer-events: none !important;
 }
 
 .ps-modal-bubble-card {
     position: relative;
+    margin: auto !important; /* যেকোনো পরিস্থিতিতে কার্ডটিকে মাঝখানে রাখবে */
     background: radial-gradient(120% 120% at 50% 0%, rgba(94, 158, 139, 0.16) 0%, rgba(18, 23, 33, 0.78) 70%);
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.18);
