@@ -333,6 +333,60 @@
   .qbox.selected .edge-e::after {
     display: block;
   }
+  /* পিডিএফ ফুল-স্ক্রিন (< >) বাটন ও লেআউট */
+  .fab-fs {
+    position: absolute;
+    top: 14px;
+    right: 24px;
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    background: rgba(18, 23, 33, 0.82);
+    color: #E6EDF3;
+    border: 1.5px solid rgba(94, 158, 139, 0.45);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 85;
+    opacity: 0.65;
+    transition: opacity 0.18s ease, transform 0.16s ease, border-color 0.16s ease;
+  }
+  .fab-fs svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .fab-fs:hover, .fab-fs:active {
+    opacity: 1;
+    color: #6FB09D;
+    border-color: #6FB09D;
+    transform: scale(1.07);
+  }
+  .editor-shell:fullscreen,
+  body.fs-active .editor-shell {
+    width: 100vw !important;
+    height: 100vh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-shell:fullscreen .viewport-wrap,
+  body.fs-active .viewport-wrap {
+    height: calc(100vh - 46px) !important;
+    flex: 1;
+  }
+  .editor-shell:fullscreen .stage,
+  body.fs-active .stage {
+    max-width: 1180px;
+  }
 </style>
 </head>
 <body>
