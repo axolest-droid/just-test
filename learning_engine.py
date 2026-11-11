@@ -289,6 +289,25 @@ def _rect_iou(r1, r2):
     return inter.get_area() / max(1.0, union)
 
 
+def _sort_page_rects_for_numbering(rects, W, H):
+    """ক্যানভাস এডিটরের সাথে হুবহু মিল রেখে বক্সগুলোর ক্রমিক নম্বর নির্ধারণের জন্য সর্টিং।"""
+    if W > 1.2 * H:
+        rects_sorted = sorted(rects, key=lambda r: (r.y0, r.x0))
+        rows, out = [], []
+        for r in rects_sorted:
+            if rows and abs(r.y0 - rows[-1][0].y0) < 28:
+                rows[-1].append(r)
+            else:
+                rows.append([r])
+        for row in rows:
+            out.extend(sorted(row, key=lambda r: r.x0))
+        return out
+    return sorted(
+        rects,
+        key=lambda q: (0 if (q.width > 0.6 * W or (q.x0 + q.x1) / 2.0 < W / 2.0) else 1, q.y0)
+    )
+
+
 def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
     suggestions = []
     if old_rows_df is None or new_rows_df is None:
@@ -301,19 +320,42 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
 
     doc = fitz.open(stream=raw_pdf, filetype="pdf")
 
-    old_by_page = {}
+    old_raw_by_page = {}
     for _, r in old_rows_df.iterrows():
         if bool(r.get("keep", True)):
             p = int(r["page"]) - 1
-            old_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
+            old_raw_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
 
-    new_by_page = {}
+    new_raw_by_page = {}
     for _, r in new_rows_df.iterrows():
         if bool(r.get("keep", True)):
             p = int(r["page"]) - 1
-            new_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
+            new_raw_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
 
-    all_pages = sorted(set(old_by_page.keys()) | set(new_by_page.keys()))
+    all_pages = sorted(set(old_raw_by_page.keys()) | set(new_raw_by_page.keys()))
+
+    # প্রতিটি পুরোনো ও নতুন বক্সের গ্লোবাল সিরিয়াল নম্বর (#1, #2, #3...) নির্ধারণ করা
+    old_by_page = {}
+    old_ serial = 1
+    for pno in sorted(old_raw_by_page.keys()):
+        if 0 <= pno < len(doc):
+            W, H = doc[pno].rect.width, doc[pno].rect.height
+            sorted_olds = _sort_page_rects_for_numbering(old_raw_by_page[pno], W, H)
+            old_by_page[pno] = []
+            for r in sorted_olds:
+                old_by_page[pno].append((old_serial, r))
+                old_serial += 1
+
+    new_by_page = {}
+    new_serial = 1
+    for pno in sorted(new_raw_by_page.keys()):
+        if 0 <= pno < len(doc):
+            W, H = doc[pno].rect.width, doc[pno].rect.height
+            sorted_news = _sort_page_rects_for_numbering(new_raw_by_page[pno], W, H)
+            new_by_page[pno] = []
+            for r in sorted_news:
+                new_by_page[pno].append((new_serial, r))
+                new_serial += 1
 
     for pno in all_pages:
         if not (0 <= pno < len(doc)):
@@ -324,9 +366,9 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
 
         matched_old = set()
 
-        for nr in news:
+        for new_box_no, nr in news:
             best_i, best_iou = -1, 0.0
-            for i, or_rect in enumerate(olds):
+            for i, (_old_no, or_rect) in enumerate(olds):
                 iou = _rect_iou(nr, or_rect)
                 horiz_overlap = min(nr.x1, or_rect.x1) - max(nr.x0, or_rect.x0)
                 if horiz_overlap > 0.6 * min(nr.width, or_rect.width) and abs(nr.y0 - or_rect.y0) < 15.0:
@@ -334,6 +376,7 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                 if iou > best_iou:
                     best_iou, best_i = iou, i
 
+            # কেস ১: নতুন বক্স যোগ করা হয়েছে
             if best_iou < 0.25:
                 top_strip = fitz.Rect(nr.x0, nr.y0, nr.x1, min(nr.y1, nr.y0 + 28.0))
                 lines = _extract_lines_from_clip(page, top_strip)
@@ -346,14 +389,16 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                             "type": "question_tags",
                             "pattern": cleaned_prefix,
                             "page": pno + 1,
+                            "box_no": new_box_no,
                             "sample": first_line[:65],
-                            "prompt": f"পৃষ্ঠা {pno + 1}-এ আপনি নতুন প্রশ্নের বক্স যোগ করেছেন যার শুরুতে **'{cleaned_prefix}'** আছে। ভবিষ্যতের জন্য এটি কি প্রশ্নের ট্যাগ হিসেবে সেভ করব?"
+                            "prompt": f"পৃষ্ঠা {pno + 1}-এর **বক্স #{new_box_no}**-এ আপনি নতুন প্রশ্নের বক্স যোগ করেছেন যার শুরুতে **'{cleaned_prefix}'** আছে। ভবিষ্যতের জন্য এটি কি প্রশ্নের ট্যাগ হিসেবে সেভ করব?"
                         })
                         existing_q.add(cleaned_prefix.lower())
 
+            # কেস ২: বক্সের নিচের অংশ ছেঁটে ফেলা হয়েছে
             elif best_i != -1:
                 matched_old.add(best_i)
-                or_rect = olds[best_i]
+                _old_no, or_rect = olds[best_i]
                 if abs(nr.y0 - or_rect.y0) <= 12.0 and (or_rect.y1 - nr.y1) >= 12.0:
                     trimmed_rect = fitz.Rect(or_rect.x0, nr.y1 - 2.0, or_rect.x1, min(or_rect.y1, nr.y1 + 32.0))
                     lines = _extract_lines_from_clip(page, trimmed_rect)
@@ -365,14 +410,16 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                                 "type": "solution_tags",
                                 "pattern": first_tok,
                                 "page": pno + 1,
+                                "box_no": new_box_no,
                                 "sample": first_cut_line[:65],
-                                "prompt": f"পৃষ্ঠা {pno + 1}-এ আপনি বক্সের নিচের অংশ ছেঁটে ফেলেছেন যা **'{first_tok}'** দিয়ে শুরু হয়েছিল। এটি কি সমাধানের ট্যাগ হিসেবে সেভ করব?"
+                                "prompt": f"পৃষ্ঠা {pno + 1}-এর **বক্স #{new_box_no}**-এর নিচের অংশ আপনি ছেঁটে ফেলেছেন যা **'{first_tok}'** দিয়ে শুরু হয়েছিল। এটি কি সমাধানের ট্যাগ হিসেবে সেভ করব?"
                             })
                             existing_s.add(first_tok.lower())
 
-        for i, or_rect in enumerate(olds):
+        # কেস ৩: পুরোনো বক্স পুরোপুরি মুছে ফেলা হয়েছে
+        for i, (old_box_no, or_rect) in enumerate(olds):
             if i not in matched_old:
-                any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for nr in news)
+                any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for _n_no, nr in news)
                 if not any_overlap:
                     lines = _extract_lines_from_clip(page, or_rect)
                     if lines and len(lines) <= 2:
@@ -383,8 +430,9 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                                 "pattern": re.escape(noise_candidate),
                                 "display_pattern": noise_candidate,
                                 "page": pno + 1,
+                                "box_no": old_box_no,
                                 "sample": noise_candidate,
-                                "prompt": f"পৃষ্ঠা {pno + 1}-এ আপনি **'{noise_candidate}'** লেখা বক্সটি মুছে দিয়েছেন। এটি কি জলছাপ/হেডার নয়েজ হিসেবে কালো তালিকাভুক্ত করব?"
+                                "prompt": f"পৃষ্ঠা {pno + 1}-এর **পুরোনো বক্স #{old_box_no}** (**'{noise_candidate}'**) আপনি মুছে দিয়েছেন। এটি কি জলছাপ/হেডার নয়েজ হিসেবে কালো তালিকাভুক্ত করব?"
                             })
                             existing_noise.add(noise_candidate.lower())
 
