@@ -723,3 +723,13 @@ div[data-testid="stTextInput"]:has(input[placeholder="BOX_JSON_BRIDGE_MARKER"]) 
     pointer-events: none !important;
     z-index: -1 !important;
 }
+/* পিডিএফ এডিটর ফুল-স্ক্রিন ফলব্যাক মোড */
+iframe.ps-iframe-fullscreen {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 999998 !important;
+    background: #0B0E14 !important;
+    border: none !important;
+}
