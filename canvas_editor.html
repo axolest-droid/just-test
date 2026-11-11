@@ -1015,14 +1015,39 @@ if (!PAGES || PAGES.length === 0) {
   overlay.addEventListener('pointerup', endPointerDrag);
   overlay.addEventListener('pointercancel', endPointerDrag);
 
-  window.addEventListener('keydown', (e) => {
+ function handleKeyNavigation(e) {
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) {
+      return;
+    }
     if (selectedIds.size > 0 && (e.key === 'Delete' || e.key === 'Backspace')) {
       boxes = boxes.filter(b => !selectedIds.has(b._id));
       selectedIds.clear();
       renderBoxes();
       e.preventDefault();
+    } else if (e.key === 'ArrowLeft' || e.key === ',' || e.key === '<') {
+      if (curPageIdx > 0) {
+        showPage(curPageIdx - 1);
+        e.preventDefault();
+      }
+    } else if (e.key === 'ArrowRight' || e.key === '.' || e.key === '>') {
+      if (curPageIdx < PAGES.length - 1) {
+        showPage(curPageIdx + 1);
+        e.preventDefault();
+      }
     }
-  });
+  }
+
+  window.addEventListener('keydown', handleKeyNavigation);
+  try {
+    if (window.parent && window.parent.document) {
+      if (window.parent._psKeyNavHandler) {
+        window.parent.document.removeEventListener('keydown', window.parent._psKeyNavHandler);
+      }
+      window.parent._psKeyNavHandler = handleKeyNavigation;
+      window.parent.document.addEventListener('keydown', handleKeyNavigation);
+    }
+  } catch (err) {}
 
   saveBtn.addEventListener('click', () => {
     const origHTML = saveBtn.innerHTML;
