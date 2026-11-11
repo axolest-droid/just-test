@@ -1177,8 +1177,18 @@ def render_learning_suggestions():
 
     is_unlocked = st.session_state.get("is_admin_unlocked", False)
 
+    # একের অধিক বা যেকোনো প্যাটার্ন থাকলে এক ক্লিকে সব মোছার বাটন
+    top_c1, top_c2 = st.columns([3, 2])
+    with top_c1:
+        st.markdown(f"**🧠 নতুন প্যাটার্ন শনাক্ত হয়েছে ({len(suggestions)}টি)**")
+    with top_c2:
+        if st.button("🗑️ সবগুলো একসাথে মুছুন", key="sug_clear_all_btn", use_container_width=True):
+            st.session_state["rv_suggestions"] = []
+            st.rerun()
+
     for idx, sug in enumerate(list(suggestions)):
-        st.info(f"🧠 **নতুন প্যাটার্ন শনাক্ত:** {sug['prompt']}\n\n*(নমুনা লাইন: `{sug.get('sample', '')}`)*")
+        box_badge = f" `[বক্স #{sug['box_no']}]`" if sug.get("box_no") else ""
+        st.info(f"🧠 **প্যাটার্ন #{idx + 1}{box_badge}:** {sug['prompt']}\n\n*(নমুনা লাইন: `{sug.get('sample', '')}`)*")
 
         pin_val = ""
         if not is_unlocked:
@@ -1197,7 +1207,7 @@ def render_learning_suggestions():
                     ok, msg = commit_rule_to_kb(
                         sug["type"],
                         sug["pattern"],
-                        f"Learned {sug['type']} from user box edit on page {sug['page']}"
+                        f"Learned {sug['type']} from user box edit on page {sug['page']} (Box #{sug.get('box_no', '?')})"
                     )
                     suggestions.pop(idx)
                     st.session_state["rv_suggestions"] = suggestions
