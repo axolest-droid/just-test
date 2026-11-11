@@ -974,7 +974,10 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
     st.session_state["rv_xray_logs"] = xray_logs
     return questions
 
-def build_practice_pdf(src_doc, questions):
+def build_practice_pdf(src_doc, questions, custom_gaps=None):
+    if custom_gaps is None:
+        custom_gaps = st.session_state.get("rv_custom_gaps", {})
+
     out = fitz.open()
     PW, PH = fitz.paper_size("a4")
     MARGIN_X, MARGIN_TOP, MARGIN_BOT, COL_GAP = 24.0, 50.0, 26.0, 18.0
@@ -1002,12 +1005,18 @@ def build_practice_pdf(src_doc, questions):
 
     page = create_styled_page()
     cur_col, y_cursor = 0, MARGIN_TOP
+    avail_col_h = PH - MARGIN_TOP - MARGIN_BOT
 
-    for pno, clip in questions:
+    for q_idx, (pno, clip) in enumerate(questions):
+        q_key = str(q_idx + 1)
+        gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, QUESTION_GAP_PT)))
+        extra_space = max(0.0, gap_pt - float(QUESTION_GAP_PT))
+
         scale = common_scale if common_scale else min(col_width / clip.width, 1.35 if num_cols == 2 else 1.65)
         target_w, target_h = clip.width * scale, clip.height * scale
+        needed_h = min(avail_col_h, target_h + extra_space)
 
-        if y_cursor + target_h > PH - MARGIN_BOT:
+        if y_cursor + needed_h > PH - MARGIN_BOT and y_cursor > MARGIN_TOP:
             cur_col += 1
             if cur_col >= num_cols:
                 page = create_styled_page()
@@ -1022,12 +1031,11 @@ def build_practice_pdf(src_doc, questions):
             page.insert_image(target_rect, pixmap=pix)
         else:
             page.show_pdf_page(target_rect, src_doc, pno, clip=clip)
-        y_cursor += target_h + QUESTION_GAP_PT
+        y_cursor += target_h + gap_pt
 
     pdf_bytes = out.tobytes(garbage=4, deflate=True)
     out.close()
     return pdf_bytes
-
 
 # ==============================================================================
 # ৯.৯ বাহ্যিক canvas_editor.html লোডার, বক্স সিঙ্ক ও পিন-সুরক্ষিত লার্নিং কার্ড
@@ -1261,6 +1269,414 @@ def render_learning_suggestions():
                 st.session_state["rv_sug_idx"] = 0
                 st.rerun()
 
+def prepare_questions_payload_for_gap_view(raw_pdf, questions, custom_gaps):
+    doc = fitz.open(stream=raw_pdf, filetype="pdf")
+    q_items = []
+    for idx, (pno, rect) in enumerate(questions):
+        if not (0 <= pno < len(doc)):
+            continue
+        page = doc[pno]
+        zoom = 1.6
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect, alpha=False)
+        img = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if pix.n == 1 else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        if INVERT_DARK_OUT and clip_is_dark(page, rect):
+            img_bgr = 255 - img_bgr
+        ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
+        q_no = idx + 1
+        gap_val = float(custom_gaps.get(str(q_no), custom_gaps.get(q_no, QUESTION_GAP_PT)))
+        q_items.append({
+            "q_no": q_no,
+            "w_pt": round(float(rect.width), 2),
+            "h_pt": round(float(rect.height), 2),
+            "gap_pt": round(gap_val, 1),
+            "img_b64": b64
+        })
+    doc.close()
+    return q_items
+
+
+def build_live_gap_arranger_html(q_items, default_gap, num_cols, header_title):
+    items_json = json.dumps(q_items)
+    title_json = json.dumps(header_title.strip())
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=Hind+Siliguri:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap');
+  * {{ box-sizing: border-box; user-select: none; }}
+  body {{ margin: 0; padding: 0; background: #0B0E14; color: #E6EDF3; font-family: 'Plus Jakarta Sans', 'Hind Siliguri', sans-serif; }}
+  .gap-shell {{ position: relative; background: #121721; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }}
+  .gap-shell:fullscreen, body.fs-active .gap-shell {{ width: 100vw !important; height: 100vh !important; border-radius: 0 !important; display: flex; flex-direction: column; }}
+  .topbar {{ background: #181F2C; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.07); display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; }}
+  .grp {{ display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }}
+  .range-box {{ display: flex; align-items: center; background: #0B0E14; border: 1px solid rgba(94,158,139,0.4); border-radius: 7px; padding: 2px 7px; gap: 4px; }}
+  .range-box span {{ font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #5E9E8B; font-weight: 700; }}
+  .range-box input {{ background: transparent; border: none; outline: none; color: #E6EDF3; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; width: 78px; padding: 3px 0; }}
+  .slider-wrap {{ display: flex; align-items: center; gap: 6px; background: #0B0E14; border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 3px 8px; }}
+  .slider-wrap input[type=range] {{ width: 95px; accent-color: #5E9E8B; cursor: pointer; height: 4px; }}
+  .val-pill {{ font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: #38BDF8; min-width: 38px; text-align: right; }}
+  .btn {{ background: #121721; color: #E6EDF3; border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; padding: 5px 8px; font-size: 11.5px; font-weight: 600; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.14s ease; }}
+  .btn:hover:not(:disabled) {{ background: #1F2937; border-color: #5E9E8B; color: #6FB09D; }}
+  .btn:disabled {{ opacity: 0.35; cursor: not-allowed; }}
+  .btn-save {{ background: #5E9E8B; color: #0B0E14; border-color: #5E9E8B; font-weight: 700; padding: 5px 11px; }}
+  .btn-save:hover {{ background: #6FB09D !important; color: #0B0E14 !important; }}
+  .page-pill {{ font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; background: #0B0E14; border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 4px 7px; min-width: 58px; text-align: center; }}
+  .vp-wrap {{ position: relative; width: 100%; height: 760px; }}
+  .gap-shell:fullscreen .vp-wrap, body.fs-active .vp-wrap {{ height: calc(100vh - 46px) !important; flex: 1; }}
+  .vp {{ width: 100%; height: 100%; overflow: auto; background: #080A0F; display: flex; justify-content: center; align-items: flex-start; padding: 14px 10px 40px 10px; }}
+  .a4-sheet {{ position: relative; width: 595px; height: 842px; background: #ffffff; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.65); flex-shrink: 0; overflow: hidden; transform-origin: top center; }}
+  .sheet-hdr {{ position: absolute; left: 24px; right: 24px; top: 18px; height: 19px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; color: #1a1a1a; font-size: 10.5px; font-weight: 600; font-family: sans-serif; }}
+  .sheet-div {{ position: absolute; left: 297.5px; top: 44px; bottom: 26px; width: 1px; background: #555; }}
+  .q-node {{ position: absolute; border-radius: 3px; cursor: pointer; transition: box-shadow 0.12s ease; }}
+  .q-node img {{ display: block; width: 100%; height: auto; pointer-events: none; }}
+  .q-node .q-tag {{ position: absolute; top: 2px; left: 2px; background: rgba(16,185,129,0.92); color: #fff; font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px; }}
+  .q-node .g-tag {{ position: absolute; bottom: 2px; right: 2px; background: rgba(14,165,233,0.9); color: #080A0F; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; font-weight: 700; padding: 1px 4px; border-radius: 3px; }}
+  .q-node.sel {{ outline: 1.8px solid #0EA5E9; box-shadow: 0 0 0 2px rgba(14,165,233,0.22); z-index: 10; }}
+  .q-node.sel .q-tag {{ background: #0EA5E9; color: #080A0F; }}
+  .q-gap-zone {{ width: 100%; background: repeating-linear-gradient(135deg, rgba(14,165,233,0.06), rgba(14,165,233,0.06) 5px, rgba(94,158,139,0.12) 5px, rgba(94,158,139,0.12) 10px); border-bottom: 1px dashed rgba(14,165,233,0.45); position: relative; }}
+  .q-node:not(.sel) .q-gap-zone:not(.has-custom) {{ background: transparent; border-bottom: none; }}
+  .fab-fs {{ position: absolute; top: 12px; right: 20px; width: 34px; height: 34px; border-radius: 8px; background: rgba(18,23,33,0.85); color: #E6EDF3; border: 1.5px solid rgba(94,158,139,0.45); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 40; opacity: 0.7; }}
+  .fab-fs:hover {{ opacity: 1; color: #6FB09D; border-color: #6FB09D; }}
+  .fab-fs svg {{ width: 16px; height: 16px; stroke: currentColor; stroke-width: 2.2; fill: none; }}
+</style>
+</head>
+<body>
+<div class="gap-shell" id="gapShell">
+  <div class="topbar">
+    <div class="grp">
+      <button class="btn" id="gPrevBtn" title="আগের পাতা">❮</button>
+      <div class="page-pill" id="gPageInd">১ / ১</div>
+      <button class="btn" id="gNextBtn" title="পরের পাতা">❯</button>
+    </div>
+
+    <div class="grp">
+      <div class="range-box" title="বক্স সিরিয়াল (যেমন: 5-15 বা 2,6)">
+        <span>#</span>
+        <input type="text" id="rangeInput" placeholder="5-15 বা সব" />
+      </div>
+      <button class="btn" id="selAllBtn" title="সব সিলেক্ট">সব</button>
+      <div class="slider-wrap" title="গ্যাপ স্লাইডার">
+        <input type="range" id="gapSlider" min="0" max="240" step="2" value="{int(default_gap)}" />
+        <span class="val-pill" id="gapValPill">{int(default_gap)}pt</span>
+      </div>
+      <button class="btn" id="resetGapBtn" title="ডিফল্ট গ্যাপ">↺</button>
+      <button class="btn btn-save" id="saveGapBtn">✓ সেভ</button>
+    </div>
+  </div>
+
+  <div class="vp-wrap">
+    <div class="vp" id="vp">
+      <div class="a4-sheet" id="a4Sheet"></div>
+    </div>
+    <button class="fab-fs" id="gFsBtn" title="ফুল স্ক্রিন">
+      <svg viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+const ITEMS = {items_json};
+const DEF_GAP = {float(default_gap)};
+const INIT_COLS = {int(num_cols)};
+const HDR_TITLE = {title_json};
+
+let selectedSet = new Set();
+let pagesLayout = [];
+let curSheetIdx = 0;
+
+const rangeInput = document.getElementById('rangeInput');
+const selAllBtn = document.getElementById('selAllBtn');
+const gapSlider = document.getElementById('gapSlider');
+const gapValPill = document.getElementById('gapValPill');
+const resetGapBtn = document.getElementById('resetGapBtn');
+const saveGapBtn = document.getElementById('saveGapBtn');
+const gPrevBtn = document.getElementById('gPrevBtn');
+const gNextBtn = document.getElementById('gNextBtn');
+const gPageInd = document.getElementById('gPageInd');
+const a4Sheet = document.getElementById('a4Sheet');
+const gFsBtn = document.getElementById('gFsBtn');
+const gapShell = document.getElementById('gapShell');
+
+function parseRangeText(txt, maxN) {{
+  const res = new Set();
+  const s = (txt || '').trim();
+  if (!s) return res;
+  s.split(',').forEach(part => {{
+    part = part.trim();
+    if (part.includes('-')) {{
+      const [a, b] = part.split('-', 2).map(x => parseInt(x.trim(), 10));
+      if (!isNaN(a) && !isNaN(b)) {{
+        for (let i = Math.max(1, Math.min(a, b)); i <= Math.min(maxN, Math.max(a, b)); i++) res.add(i);
+      }}
+    }} else {{
+      const v = parseInt(part, 10);
+      if (!isNaN(v) && v >= 1 && v <= maxN) res.add(v);
+    }}
+  }});
+  return res;
+}}
+
+function computeSheetPages() {{
+  const PW = 595.0, PH = 842.0;
+  const MX = 24.0, MT = 50.0, MB = 26.0, CG = 18.0;
+  let numCols = INIT_COLS;
+  let colW = (PW - 2 * MX - (numCols - 1) * CG) / numCols;
+
+  if (ITEMS.length === 0) {{
+    pagesLayout = [[]];
+    return;
+  }}
+
+  const widths = ITEMS.map(x => x.w_pt).sort((a, b) => a - b);
+  const wideSet = widths[Math.floor(widths.length / 2)] > 1.5 * colW;
+  let commonScale = null;
+  if (wideSet) {{
+    numCols = 1;
+    colW = PW - 2 * MX;
+    commonScale = Math.min(1.65, colW / Math.max(...widths));
+  }}
+
+  const availColH = PH - MT - MB;
+  const pages = [[]];
+  let curCol = 0;
+  let yCursor = MT;
+
+  ITEMS.forEach(item => {{
+    const scale = commonScale ? commonScale : Math.min(colW / item.w_pt, numCols === 2 ? 1.35 : 1.65);
+    const tw = item.w_pt * scale;
+    const th = item.h_pt * scale;
+    const gap = item.gap_pt;
+    const extraSpace = Math.max(0.0, gap - DEF_GAP);
+    const neededH = Math.min(availColH, th + extraSpace);
+
+    if (yCursor + neededH > PH - MB && yCursor > MT) {{
+      curCol += 1;
+      if (curCol >= numCols) {{
+        pages.push([]);
+        curCol = 0;
+      }}
+      yCursor = MT;
+    }}
+
+    const xStart = MX + curCol * (colW + CG);
+    pages[pages.length - 1].push({{
+      item: item,
+      x: xStart,
+      y: yCursor,
+      w: tw,
+      h: th,
+      gap: gap,
+      numCols: numCols
+    }});
+    yCursor += th + gap;
+  }});
+
+  pagesLayout = pages;
+  if (curSheetIdx >= pagesLayout.length) curSheetIdx = Math.max(0, pagesLayout.length - 1);
+}}
+
+function renderCurrentSheet() {{
+  computeSheetPages();
+  a4Sheet.innerHTML = '';
+
+  const totalPages = pagesLayout.length;
+  gPageInd.textContent = `${{curSheetIdx + 1}} / ${{totalPages}}`;
+  gPrevBtn.disabled = (curSheetIdx <= 0);
+  gNextBtn.disabled = (curSheetIdx >= totalPages - 1);
+
+  const curEntries = pagesLayout[curSheetIdx] || [];
+  const useCols = curEntries.length > 0 ? curEntries[0].numCols : INIT_COLS;
+
+  if (HDR_TITLE) {{
+    const hdr = document.createElement('div');
+    hdr.className = 'sheet-hdr';
+    hdr.innerHTML = `<span>${{HDR_TITLE}}</span><span>Total Q: ${{ITEMS.length}}</span>`;
+    a4Sheet.appendChild(hdr);
+  }}
+
+  if (useCols === 2) {{
+    const div = document.createElement('div');
+    div.className = 'sheet-div';
+    a4Sheet.appendChild(div);
+  }}
+
+  curEntries.forEach(ent => {{
+    const it = ent.item;
+    const isSel = selectedSet.has(it.q_no);
+    const isCustom = Math.abs(it.gap_pt - DEF_GAP) >= 1.0;
+
+    const node = document.createElement('div');
+    node.className = 'q-node' + (isSel ? ' sel' : '');
+    node.style.left = ent.x + 'px';
+    node.style.top = ent.y + 'px';
+    node.style.width = ent.w + 'px';
+
+    const img = document.createElement('img');
+    img.src = 'data:image/jpeg;base64,' + it.img_b64;
+    img.style.height = ent.h + 'px';
+    node.appendChild(img);
+
+    const gapZone = document.createElement('div');
+    gapZone.className = 'q-gap-zone' + (isCustom ? ' has-custom' : '');
+    gapZone.style.height = Math.max(0, ent.gap) + 'px';
+    node.appendChild(gapZone);
+
+    const qTag = document.createElement('div');
+    qTag.className = 'q-tag';
+    qTag.textContent = '#' + it.q_no;
+    node.appendChild(qTag);
+
+    if (isCustom || isSel) {{
+      const gTag = document.createElement('div');
+      gTag.className = 'g-tag';
+      gTag.textContent = Math.round(it.gap_pt) + 'pt';
+      node.appendChild(gTag);
+    }}
+
+    node.addEventListener('click', (e) => {{
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {{
+        if (selectedSet.has(it.q_no)) selectedSet.delete(it.q_no);
+        else selectedSet.add(it.q_no);
+      }} else {{
+        if (selectedSet.size === 1 && selectedSet.has(it.q_no)) selectedSet.clear();
+        else {{
+          selectedSet.clear();
+          selectedSet.add(it.q_no);
+        }}
+      }}
+      gapSlider.value = Math.round(it.gap_pt);
+      gapValPill.textContent = Math.round(it.gap_pt) + 'pt';
+      renderCurrentSheet();
+    }});
+
+    a4Sheet.appendChild(node);
+  }});
+}}
+
+function jumpToQuestionPage(qNo) {{
+  for (let p = 0; p < pagesLayout.length; p++) {{
+    if (pagesLayout[p].some(e => e.item.q_no === qNo)) {{
+      curSheetIdx = p;
+      break;
+    }}
+  }}
+}}
+
+rangeInput.addEventListener('input', () => {{
+  selectedSet = parseRangeText(rangeInput.value, ITEMS.length);
+  if (selectedSet.size > 0) {{
+    const firstQ = Math.min(...Array.from(selectedSet));
+    const found = ITEMS.find(x => x.q_no === firstQ);
+    if (found) {{
+      gapSlider.value = Math.round(found.gap_pt);
+      gapValPill.textContent = Math.round(found.gap_pt) + 'pt';
+    }}
+    computeSheetPages();
+    jumpToQuestionPage(firstQ);
+  }}
+  renderCurrentSheet();
+}});
+
+selAllBtn.addEventListener('click', () => {{
+  if (selectedSet.size === ITEMS.length) {{
+    selectedSet.clear();
+    rangeInput.value = '';
+  }} else {{
+    ITEMS.forEach(x => selectedSet.add(x.q_no));
+    rangeInput.value = `1-${{ITEMS.length}}`;
+  }}
+  renderCurrentSheet();
+}});
+
+gapSlider.addEventListener('input', () => {{
+  const val = parseFloat(gapSlider.value);
+  gapValPill.textContent = Math.round(val) + 'pt';
+  if (selectedSet.size === 0) {{
+    ITEMS.forEach(x => selectedSet.add(x.q_no));
+    rangeInput.value = `1-${{ITEMS.length}}`;
+  }}
+  const firstQ = Math.min(...Array.from(selectedSet));
+  ITEMS.forEach(x => {{
+    if (selectedSet.has(x.q_no)) x.gap_pt = val;
+  }});
+  computeSheetPages();
+  jumpToQuestionPage(firstQ);
+  renderCurrentSheet();
+}});
+
+resetGapBtn.addEventListener('click', () => {{
+  gapSlider.value = Math.round(DEF_GAP);
+  gapValPill.textContent = Math.round(DEF_GAP) + 'pt';
+  const targets = selectedSet.size > 0 ? selectedSet : new Set(ITEMS.map(x => x.q_no));
+  ITEMS.forEach(x => {{
+    if (targets.has(x.q_no)) x.gap_pt = DEF_GAP;
+  }});
+  renderCurrentSheet();
+}});
+
+gPrevBtn.addEventListener('click', () => {{
+  if (curSheetIdx > 0) {{ curSheetIdx--; renderCurrentSheet(); }}
+}});
+gNextBtn.addEventListener('click', () => {{
+  if (curSheetIdx < pagesLayout.length - 1) {{ curSheetIdx++; renderCurrentSheet(); }}
+}});
+
+window.addEventListener('keydown', (e) => {{
+  const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+  if (tag === 'INPUT') return;
+  if (e.key === 'ArrowLeft' || e.key === ',' || e.key === '<') {{
+    if (curSheetIdx > 0) {{ curSheetIdx--; renderCurrentSheet(); e.preventDefault(); }}
+  }} else if (e.key === 'ArrowRight' || e.key === '.' || e.key === '>') {{
+    if (curSheetIdx < pagesLayout.length - 1) {{ curSheetIdx++; renderCurrentSheet(); e.preventDefault(); }}
+  }}
+}});
+
+gFsBtn.addEventListener('click', () => {{
+  if (document.fullscreenElement) {{
+    document.exitFullscreen();
+  }} else if (gapShell.requestFullscreen) {{
+    gapShell.requestFullscreen();
+  }}
+}});
+
+saveGapBtn.addEventListener('click', () => {{
+  const orig = saveGapBtn.textContent;
+  saveGapBtn.textContent = '...';
+  try {{
+    const customMap = {{}};
+    ITEMS.forEach(x => {{
+      if (Math.abs(x.gap_pt - DEF_GAP) >= 0.5) {{
+        customMap[String(x.q_no)] = Math.round(x.gap_pt * 10) / 10;
+      }}
+    }});
+    const payload = JSON.stringify({{ ts: Date.now(), action: 'save_gaps', gaps: customMap }});
+    const parentDoc = window.parent.document;
+    const inp = parentDoc.querySelector('input[placeholder="BOX_JSON_BRIDGE_MARKER"]')
+             || parentDoc.querySelector('input[aria-label="BOX_JSON_BRIDGE"]');
+    if (inp) {{
+      const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
+      inp.focus();
+      setter.call(inp, payload);
+      inp.dispatchEvent(new window.parent.Event('input', {{ bubbles: true }}));
+      inp.dispatchEvent(new window.parent.Event('change', {{ bubbles: true }}));
+      inp.dispatchEvent(new window.parent.KeyboardEvent('keydown', {{
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+      }}));
+      inp.blur();
+    }}
+  }} catch (err) {{}}
+  setTimeout(() => {{ saveGapBtn.textContent = orig; }}, 800);
+}});
+
+renderCurrentSheet();
+</script>
+</body>
+</html>"""
+
+
 def render_results_and_review(raw_pdf, file_key):
     ver = st.session_state.get("rv_ver", 0)
 
@@ -1274,29 +1690,37 @@ def render_results_and_review(raw_pdf, file_key):
     if bridge_val and bridge_val != st.session_state.get("last_bridge_val"):
         st.session_state["last_bridge_val"] = bridge_val
         try:
-            old_df = st.session_state.get("rv_rows")
             payload = json.loads(bridge_val)
-            new_boxes = payload.get("boxes", [])
-            new_df = pd.DataFrame(new_boxes, columns=["keep", "page", "x0", "y0", "x1", "y1"])
-
-            learned = analyze_user_corrections(raw_pdf, old_df, new_df)
-            if learned:
-                cur_sugs = st.session_state.get("rv_suggestions", [])
-                existing_pats = {(s["type"], s["pattern"]) for s in cur_sugs}
-                for item in learned:
-                    if (item["type"], item["pattern"]) not in existing_pats:
-                        cur_sugs.append(item)
-                st.session_state["rv_suggestions"] = cur_sugs
-
-            st.session_state["rv_rows"] = new_df
-            src = fitz.open(stream=raw_pdf, filetype="pdf")
-            qs = rows_to_questions(new_df, src)
-            if qs:
-                built_pdf = build_practice_pdf(src, qs)
-                st.session_state["rv_auto_pdf"] = built_pdf
+            if payload.get("action") == "save_gaps":
+                st.session_state["rv_custom_gaps"] = payload.get("gaps", {})
+                src = fitz.open(stream=raw_pdf, filetype="pdf")
+                qs = rows_to_questions(st.session_state["rv_rows"], src)
+                st.session_state["rv_auto_pdf"] = build_practice_pdf(src, qs) if qs else None
+                src.close()
+                st.toast("গ্যাপ সেটআপ পিডিএফে যুক্ত হয়েছে!")
             else:
-                st.session_state["rv_auto_pdf"] = None
-            src.close()
+                old_df = st.session_state.get("rv_rows")
+                new_boxes = payload.get("boxes", [])
+                new_df = pd.DataFrame(new_boxes, columns=["keep", "page", "x0", "y0", "x1", "y1"])
+
+                learned = analyze_user_corrections(raw_pdf, old_df, new_df)
+                if learned:
+                    cur_sugs = st.session_state.get("rv_suggestions", [])
+                    existing_pats = {(s["type"], s["pattern"]) for s in cur_sugs}
+                    for item in learned:
+                        if (item["type"], item["pattern"]) not in existing_pats:
+                            cur_sugs.append(item)
+                    st.session_state["rv_suggestions"] = cur_sugs
+
+                st.session_state["rv_rows"] = new_df
+                src = fitz.open(stream=raw_pdf, filetype="pdf")
+                qs = rows_to_questions(new_df, src)
+                if qs:
+                    built_pdf = build_practice_pdf(src, qs)
+                    st.session_state["rv_auto_pdf"] = built_pdf
+                else:
+                    st.session_state["rv_auto_pdf"] = None
+                src.close()
         except Exception as e:
             st.error(f"ত্রুটি: {e}")
 
@@ -1334,14 +1758,26 @@ def render_results_and_review(raw_pdf, file_key):
         with st.popover("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট দেখুন", use_container_width=True):
             st.dataframe(pd.DataFrame(st.session_state["rv_xray_logs"]), use_container_width=True)
 
-    with st.expander("বক্স এডিটর", expanded=False):
-        selected_indices = st.session_state.get("rv_page_indices", [0])
-        pages_payload = prepare_pages_payload_for_canvas(raw_pdf, selected_indices)
-        initial_boxes = rows_df.to_dict(orient="records") if not rows_df.empty else []
+    # ডান পাশের প্যানেলে দুটি ড্রপডাউন একসাথে সুন্দরভাবে রাখার কন্টেইনার
+    with st.container():
+        with st.expander("বক্স এডিটর", expanded=False):
+            selected_indices = st.session_state.get("rv_page_indices", [0])
+            pages_payload = prepare_pages_payload_for_canvas(raw_pdf, selected_indices)
+            initial_boxes = rows_df.to_dict(orient="records") if not rows_df.empty else []
 
-        if components is not None:
-            canvas_html = build_interactive_canvas_html(pages_payload, initial_boxes, file_key)
-            components.html(canvas_html, height=820, scrolling=False)
+            if components is not None:
+                canvas_html = build_interactive_canvas_html(pages_payload, initial_boxes, file_key)
+                components.html(canvas_html, height=820, scrolling=False)
+
+        with st.expander("গ্যাপ সেটআপ", expanded=False):
+            if components is not None and not rows_df.empty:
+                src_tmp = fitz.open(stream=raw_pdf, filetype="pdf")
+                ordered_qs = rows_to_questions(rows_df, src_tmp)
+                src_tmp.close()
+                custom_gaps = st.session_state.get("rv_custom_gaps", {})
+                q_items = prepare_questions_payload_for_gap_view(raw_pdf, ordered_qs, custom_gaps)
+                gap_html = build_live_gap_arranger_html(q_items, QUESTION_GAP_PT, COLUMNS_PER_PAGE, HEADER_TITLE)
+                components.html(gap_html, height=820, scrolling=False)
 
 # ১০. মেইন ইন্টারফেস
 st.markdown("""
@@ -1403,6 +1839,7 @@ if uploaded_file is not None:
             st.session_state["rv_page_indices"] = selected_pages
             st.session_state["rv_file_key"] = file_key
             st.session_state["rv_suggestions"] = []
+            st.session_state["rv_custom_gaps"] = {}
             st.session_state["rv_ver"] = st.session_state.get("rv_ver", 0) + 1
             src_doc.close()
 
