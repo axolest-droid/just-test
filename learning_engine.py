@@ -336,7 +336,7 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
 
     # প্রতিটি পুরোনো ও নতুন বক্সের গ্লোবাল সিরিয়াল নম্বর (#1, #2, #3...) নির্ধারণ করা
     old_by_page = {}
-    old_ serial = 1
+    old_serial = 1
     for pno in sorted(old_raw_by_page.keys()):
         if 0 <= pno < len(doc):
             W, H = doc[pno].rect.width, doc[pno].rect.height
