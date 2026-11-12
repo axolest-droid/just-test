@@ -387,6 +387,64 @@
   body.fs-active .stage {
     max-width: 1180px;
   }
+  /* লিখিত প্রশ্নের গ্যাপের জন্য মনোনীত হালকা লাল (W) বক্স */
+  .qbox.w-gap {
+    border: 1.8px solid #F43F5E;
+    background: rgba(244, 63, 94, 0.14);
+  }
+  .qbox.w-gap:hover {
+    background: rgba(244, 63, 94, 0.22);
+    border-color: #E11D48;
+  }
+  .qbox.w-gap .qbox-badge {
+    background: rgba(225, 29, 72, 0.92);
+    color: #ffffff;
+  }
+  .qbox.w-gap.selected {
+    border: 2px solid #FB7185;
+    background: rgba(244, 63, 94, 0.24);
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.42);
+  }
+  .qbox.w-gap.selected .qbox-badge {
+    background: #F43F5E;
+    color: #ffffff;
+  }
+  .qbox.w-gap.selected .edge-n::after,
+  .qbox.w-gap.selected .edge-s::after,
+  .qbox.w-gap.selected .edge-w::after,
+  .qbox.w-gap.selected .edge-e::after {
+    background: #F43F5E;
+  }
+
+  /* উপরের হেডারে মিনিমাল গ্যাপ কন্ট্রোলার ও W বাটন */
+  .btn.active-w {
+    background: rgba(244, 63, 94, 0.2);
+    color: #FDA4AF;
+    border-color: #F43F5E;
+  }
+  .w-gap-ctrl {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #0B0E14;
+    border: 1px solid rgba(244, 63, 94, 0.35);
+    border-radius: 7px;
+    padding: 3px 7px;
+  }
+  .w-gap-ctrl input[type=range] {
+    width: 68px;
+    accent-color: #F43F5E;
+    cursor: pointer;
+    height: 4px;
+  }
+  .w-gap-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #FDA4AF;
+    min-width: 34px;
+    text-align: right;
+  }
 </style>
 </head>
 <body>
