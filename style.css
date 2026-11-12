@@ -810,7 +810,3 @@ iframe.ps-iframe-fullscreen {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-/* ডান পাশের প্যানেলে বক্স এডিটর ও গ্যাপ সেটআপ ড্রপডাউনের মাঝখানের ব্যবধান */
-.ps-right-editor-panel [data-testid="stExpander"] {
-    margin-bottom: 0.65rem !important;
-}
