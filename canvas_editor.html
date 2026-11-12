@@ -461,6 +461,12 @@
     </div>
 
     <div class="action-group">
+      <button class="btn" id="undoBtn" title="আনডু (Ctrl+Z)" disabled>↶</button>
+      <button class="btn" id="wToggleBtn" title="গ্যাপ বক্স চিহ্নিত করুন (কীবোর্ড: W)">W</button>
+      <div class="w-gap-ctrl" title="লাল (W) বক্সগুলোর নিচের ফাঁকা জায়গার মাপ">
+        <input type="range" id="wGapSlider" min="20" max="260" step="5" value="90" />
+        <span class="w-gap-val" id="wGapVal">90pt</span>
+      </div>
       <button class="btn" id="multiToggleBtn" title="একাধিক বক্স সিলেক্ট">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
         <span>মাল্টি</span>
@@ -518,119 +524,35 @@
     const doc = window.parent.document;
     const win = window.parent;
 
-  const syncLayoutAndDropzone = () => {
+const syncLayoutAndDropzone = () => {
       const spans = doc.querySelectorAll('[data-testid="stFileUploaderDropzoneInstructions"] div span');
       if (spans.length > 0 && !spans[0].dataset.customized) {
         spans[0].innerText = "পিডিএফ ফাইল ড্রপ করুন";
         spans[0].dataset.customized = "true";
       }
 
-      /* নতুন স্ক্যান বাটনে ক্লিক করলে আবার বক্স এডিটরকে ডিফল্ট ট্যাব করা */
-      doc.querySelectorAll('button').forEach(btn => {
-        if (!btn.dataset.scanHooked && (btn.innerText || '').includes('স্ক্যান করুন')) {
-          btn.dataset.scanHooked = 'true';
-          btn.addEventListener('click', () => {
-            win.sessionStorage.setItem('ps_active_right_tab', 'box');
-          });
-        }
-      });
-
-      /* পিসি সংস্করণে ডান পাশে দুটি ড্রপডাউন স্থাপন এবং অটো-সুইচ (Accordion) নিয়ন্ত্রণ */
       const blockCont = doc.querySelector('.block-container');
       if (!blockCont) return;
-      const expanders = blockCont.querySelectorAll('[data-testid="stExpander"]');
+      const expander = blockCont.querySelector('[data-testid="stExpander"]');
       const mode = doc.body.getAttribute('data-device-mode') || win.sessionStorage.getItem('ps_device_mode') || 'pc';
 
-      if (expanders.length > 0 && mode !== 'phone' && win.innerWidth >= 960) {
+      if (expander && mode !== 'phone' && win.innerWidth >= 960) {
         blockCont.classList.add('ps-pc-split-active');
-        const mainVBlock = blockCont.querySelector('[data-testid="stVerticalBlock"]');
-        if (mainVBlock) {
-          mainVBlock.classList.add('ps-main-split-grid');
-          let wrapper = expanders[0];
-          while (wrapper.parentElement && wrapper.parentElement !== mainVBlock) {
-            wrapper = wrapper.parentElement;
-          }
-          if (wrapper && wrapper.parentElement === mainVBlock) {
-            wrapper.classList.add('ps-right-editor-panel');
-          }
+        let wrapper = expander;
+        while (wrapper.parentElement && wrapper.parentElement !== blockCont && wrapper.parentElement.getAttribute('data-testid') !== 'stVerticalBlock') {
+          wrapper = wrapper.parentElement;
         }
-
-        const boxDetails = expanders[0] ? expanders[0].querySelector('details') : null;
-        const gapDetails = expanders[1] ? expanders[1].querySelector('details') : null;
-        const activeTab = win.sessionStorage.getItem('ps_active_right_tab') || 'box';
-
-        /* ম্যানুয়ালি একটি ড্রপডাউনে ক্লিক করলে অপরটি বন্ধ করার লিসেনার */
-        if (boxDetails && !boxDetails.dataset.tabHooked) {
-          boxDetails.dataset.tabHooked = 'true';
-          const boxSum = boxDetails.querySelector('summary');
-          if (boxSum) {
-            boxSum.addEventListener('click', () => {
-              setTimeout(() => {
-                if (boxDetails.open) {
-                  win.sessionStorage.setItem('ps_active_right_tab', 'box');
-                  if (gapDetails && gapDetails.open) {
-                    const gs = gapDetails.querySelector('summary');
-                    if (gs) gs.click();
-                    gapDetails.open = false;
-                  }
-                }
-              }, 30);
-            });
-          }
+        if (wrapper && wrapper.parentElement) {
+          wrapper.classList.add('ps-right-editor-panel');
+          wrapper.parentElement.classList.add('ps-main-split-grid');
         }
-
-        if (gapDetails && !gapDetails.dataset.tabHooked) {
-          gapDetails.dataset.tabHooked = 'true';
-          const gapSum = gapDetails.querySelector('summary');
-          if (gapSum) {
-            gapSum.addEventListener('click', () => {
-              setTimeout(() => {
-                if (gapDetails.open) {
-                  win.sessionStorage.setItem('ps_active_right_tab', 'gap');
-                  if (boxDetails && boxDetails.open) {
-                    const bs = boxDetails.querySelector('summary');
-                    if (bs) bs.click();
-                    boxDetails.open = false;
-                  }
-                }
-              }, 30);
-            });
-          }
-        }
-
-        /* স্ক্যানের পর বা সেভ বাটনে ক্লিকের পর নির্দিষ্ট ড্রপডাউন খোলা ও অপরটি বন্ধ রাখা */
-        if (boxDetails && gapDetails) {
-          if (activeTab === 'gap' && boxDetails.dataset.appliedTab !== 'gap') {
-            boxDetails.dataset.appliedTab = 'gap';
-            if (boxDetails.open) {
-              const bs = boxDetails.querySelector('summary');
-              if (bs) bs.click();
-              boxDetails.open = false;
-            }
-            if (!gapDetails.open) {
-              const gs = gapDetails.querySelector('summary');
-              if (gs) gs.click();
-              else gapDetails.open = true;
-            }
-          } else if (activeTab === 'box' && boxDetails.dataset.appliedTab !== 'box') {
-            boxDetails.dataset.appliedTab = 'box';
-            if (gapDetails.open) {
-              const gs = gapDetails.querySelector('summary');
-              if (gs) gs.click();
-              gapDetails.open = false;
-            }
-            if (!boxDetails.open) {
-              const bs = boxDetails.querySelector('summary');
-              if (bs) bs.click();
-              else boxDetails.open = true;
-            }
-          }
-        } else if (boxDetails && !boxDetails.dataset.pcAutoOpened) {
-          boxDetails.dataset.pcAutoOpened = 'true';
-          if (!boxDetails.open) {
-            const bs = boxDetails.querySelector('summary');
-            if (bs) bs.click();
-            else boxDetails.open = true;
+        const detailsEl = expander.querySelector('details');
+        if (detailsEl && !detailsEl.dataset.pcAutoOpened) {
+          detailsEl.dataset.pcAutoOpened = 'true';
+          if (!detailsEl.open) {
+            const summaryEl = detailsEl.querySelector('summary');
+            if (summaryEl) summaryEl.click();
+            else detailsEl.open = true;
           }
         }
       } else {
@@ -750,6 +672,8 @@
 const PAGES = {{PAGES_JSON}};
 let boxes = {{BOXES_JSON}};
 const STORAGE_PAGE_KEY = "ps_cur_page_{{SAFE_KEY}}";
+let wGapPt = parseInt("{{W_GAP_PT}}", 10);
+if (isNaN(wGapPt) || wGapPt < 20) wGapPt = 90;
 
 if (!PAGES || PAGES.length === 0) {
   const shell = document.getElementById('editorShell');
@@ -768,11 +692,23 @@ if (!PAGES || PAGES.length === 0) {
   let panMode = false;
   let zoomLevel = 1.0;
   let nextId = 1;
-  boxes.forEach(b => { b._id = nextId++; b.keep = (b.keep !== false); });
+  boxes.forEach(b => {
+    b._id = nextId++;
+    b.keep = (b.keep !== false);
+    b.w_gap = Boolean(b.w_gap);
+  });
+
+  /* আনডু ও রিডু হিস্ট্রি স্ট্যাক */
+  let undoStack = [];
+  let redoStack = [];
 
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
   const pageIndicator = document.getElementById('pageIndicator');
+  const undoBtn = document.getElementById('undoBtn');
+  const wToggleBtn = document.getElementById('wToggleBtn');
+  const wGapSlider = document.getElementById('wGapSlider');
+  const wGapVal = document.getElementById('wGapVal');
   const multiToggleBtn = document.getElementById('multiToggleBtn');
   const selPageAllBtn = document.getElementById('selPageAllBtn');
   const fabAddBtn = document.getElementById('fabAddBtn');
@@ -785,6 +721,61 @@ if (!PAGES || PAGES.length === 0) {
   const stage = document.getElementById('stage');
   const pageImg = document.getElementById('pageImg');
   const overlay = document.getElementById('overlay');
+
+  if (wGapSlider && wGapVal) {
+    wGapSlider.value = wGapPt;
+    wGapVal.textContent = wGapPt + 'pt';
+    wGapSlider.addEventListener('input', () => {
+      wGapPt = parseInt(wGapSlider.value, 10) || 90;
+      wGapVal.textContent = wGapPt + 'pt';
+    });
+  }
+
+  function cloneBoxesState() {
+    return boxes.map(b => ({ ...b }));
+  }
+
+  function pushHistory(customSnapshot) {
+    undoStack.push(customSnapshot || cloneBoxesState());
+    if (undoStack.length > 35) undoStack.shift();
+    redoStack = [];
+    if (undoBtn) undoBtn.disabled = (undoStack.length === 0);
+  }
+
+  function performUndo() {
+    if (undoStack.length === 0) return;
+    redoStack.push(cloneBoxesState());
+    boxes = undoStack.pop();
+    if (undoBtn) undoBtn.disabled = (undoStack.length === 0);
+    renderBoxes();
+  }
+
+  function performRedo() {
+    if (redoStack.length === 0) return;
+    undoStack.push(cloneBoxesState());
+    boxes = redoStack.pop();
+    if (undoBtn) undoBtn.disabled = (undoStack.length === 0);
+    renderBoxes();
+  }
+
+  if (undoBtn) {
+    undoBtn.addEventListener('click', performUndo);
+  }
+
+  function toggleWForSelected() {
+    const p = curPageObj();
+    if (!p || selectedIds.size === 0) return;
+    const targets = boxes.filter(b => selectedIds.has(b._id) && b.page === p.page && b.keep !== false);
+    if (targets.length === 0) return;
+    pushHistory();
+    const allAlreadyW = targets.every(b => Boolean(b.w_gap));
+    targets.forEach(b => { b.w_gap = !allAlreadyW; });
+    renderBoxes();
+  }
+
+  if (wToggleBtn) {
+    wToggleBtn.addEventListener('click', toggleWForSelected);
+  }
 
   function syncDeviceModeFromParent() {
     try {
@@ -886,10 +877,19 @@ if (!PAGES || PAGES.length === 0) {
 
   function updateNavUI() {
     const p = curPageObj();
-    const totalBoxes = boxes.filter(b => b.keep !== false).length;
-    pageIndicator.textContent = p ? `${curPageIdx + 1}/${PAGES.length} • ${totalBoxes}টি` : '০/০';
+    const activeList = boxes.filter(b => b.keep !== false);
+    const totalBoxes = activeList.length;
+    const wCount = activeList.filter(b => b.w_gap).length;
+    const wSuffix = wCount > 0 ? ` • ${wCount}W` : '';
+    pageIndicator.textContent = p ? `${curPageIdx + 1}/${PAGES.length} • ${totalBoxes}টি${wSuffix}` : '০/০';
     prevBtn.disabled = (curPageIdx <= 0);
     nextBtn.disabled = (curPageIdx >= PAGES.length - 1);
+
+    if (wToggleBtn && p) {
+      const selOnPage = boxes.filter(b => selectedIds.has(b._id) && b.page === p.page && b.keep !== false);
+      const isAnyW = selOnPage.length > 0 && selOnPage.every(b => b.w_gap);
+      wToggleBtn.classList.toggle('active-w', isAnyW);
+    }
   }
 
   function renderBoxes() {
@@ -908,7 +908,8 @@ if (!PAGES || PAGES.length === 0) {
 
       const el = document.createElement('div');
       const isSel = selectedIds.has(b._id);
-      el.className = 'qbox' + (isSel ? ' selected' : '');
+      const isW = Boolean(b.w_gap);
+      el.className = 'qbox' + (isW ? ' w-gap' : '') + (isSel ? ' selected' : '');
       el.style.left = (b.x0 * sx) + 'px';
       el.style.top = (b.y0 * sy) + 'px';
       el.style.width = Math.max(18, (b.x1 - b.x0) * sx) + 'px';
@@ -917,7 +918,7 @@ if (!PAGES || PAGES.length === 0) {
 
       const badge = document.createElement('div');
       badge.className = 'qbox-badge';
-      badge.textContent = `#${qNum}`;
+      badge.textContent = isW ? `#${qNum} • W` : `#${qNum}`;
       el.appendChild(badge);
 
       const del = document.createElement('div');
@@ -926,6 +927,7 @@ if (!PAGES || PAGES.length === 0) {
       del.addEventListener('pointerdown', (ev) => {
         ev.stopPropagation();
         ev.preventDefault();
+        pushHistory();
         boxes = boxes.filter(item => item._id !== b._id);
         selectedIds.delete(b._id);
         renderBoxes();
@@ -980,6 +982,7 @@ if (!PAGES || PAGES.length === 0) {
   function createBoxAtPosition(targetXPt, targetYPt) {
     const p = curPageObj();
     if (!p) return;
+    pushHistory();
     const W = p.w_pt, H = p.h_pt;
     const y0 = Math.max(14, Math.min(H - 85, targetYPt - 18));
     const y1 = Math.min(H - 12, y0 + 70);
@@ -1011,7 +1014,8 @@ if (!PAGES || PAGES.length === 0) {
       x0: Math.round(x0 * 10) / 10,
       y0: Math.round(y0 * 10) / 10,
       x1: Math.round(x1 * 10) / 10,
-      y1: Math.round(y1 * 10) / 10
+      y1: Math.round(y1 * 10) / 10,
+      w_gap: false
     };
     boxes.push(nb);
     selectedIds.clear();
@@ -1096,7 +1100,9 @@ if (!PAGES || PAGES.length === 0) {
       group: groupBoxes,
       origMap: origMap,
       startX: startX,
-      startY: startY
+      startY: startY,
+      preDragSnapshot: cloneBoxesState(),
+      moved: false
     };
 
     renderBoxes();
@@ -1114,6 +1120,10 @@ if (!PAGES || PAGES.length === 0) {
     const my = (e.clientY - rect.top) / sy;
     const dx = mx - activeDrag.startX;
     const dy = my - activeDrag.startY;
+
+    if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4) {
+      activeDrag.moved = true;
+    }
 
     activeDrag.group.forEach(gb => {
       const orig = activeDrag.origMap[gb._id];
@@ -1149,6 +1159,9 @@ if (!PAGES || PAGES.length === 0) {
   function endPointerDrag(e) {
     if (!activeDrag || (e && e.pointerId !== activeDrag.pointerId)) return;
     try { overlay.releasePointerCapture(activeDrag.pointerId); } catch (err) {}
+    if (activeDrag.moved && activeDrag.preDragSnapshot) {
+      pushHistory(activeDrag.preDragSnapshot);
+    }
     activeDrag = null;
     renderBoxes();
   }
@@ -1156,12 +1169,89 @@ if (!PAGES || PAGES.length === 0) {
   overlay.addEventListener('pointerup', endPointerDrag);
   overlay.addEventListener('pointercancel', endPointerDrag);
 
- function handleKeyNavigation(e) {
+  function handleKeyNavigation(e) {
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) {
       return;
     }
+
+    /* Ctrl+Z (আনডু) এবং Ctrl+Y (রিডু) */
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      if (e.shiftKey) performRedo();
+      else performUndo();
+      e.preventDefault();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+      performRedo();
+      e.preventDefault();
+      return;
+    }
+
+    /* Ctrl+D চাপলে সিলেক্ট করা বক্স ঠিক নিচে ডুপ্লিকেট হবে */
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+      const p = curPageObj();
+      if (p && selectedIds.size > 0) {
+        const selBoxes = boxes.filter(b => selectedIds.has(b._id) && b.page === p.page && b.keep !== false);
+        if (selBoxes.length > 0) {
+          pushHistory();
+          const newIds = new Set();
+          selBoxes.forEach(sb => {
+            const h = sb.y1 - sb.y0;
+            const ny0 = Math.min(p.h_pt - h - 4, sb.y1 + 8);
+            const dup = {
+              _id: nextId++,
+              keep: true,
+              page: p.page,
+              x0: sb.x0,
+              y0: Math.round(ny0 * 10) / 10,
+              x1: sb.x1,
+              y1: Math.round((ny0 + h) * 10) / 10,
+              w_gap: Boolean(sb.w_gap)
+            };
+            boxes.push(dup);
+            newIds.add(dup._id);
+          });
+          selectedIds = newIds;
+          renderBoxes();
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+
+    /* W চাপলে সিলেক্ট করা বক্স গ্যাপের জন্য মনোনীত (হালকা লাল) হবে */
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'w' || e.key === 'W')) {
+      if (selectedIds.size > 0) {
+        toggleWForSelected();
+        e.preventDefault();
+      }
+      return;
+    }
+
+    /* Shift + Arrow Keys চাপলে সিলেক্ট করা বক্স ২ পয়েন্ট করে সূক্ষ্মভাবে সরবে */
+    if (e.shiftKey && selectedIds.size > 0 && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      const p = curPageObj();
+      if (p) {
+        pushHistory();
+        const step = 2.0;
+        boxes.forEach(b => {
+          if (selectedIds.has(b._id) && b.page === p.page && b.keep !== false) {
+            const w = b.x1 - b.x0, h = b.y1 - b.y0;
+            if (e.key === 'ArrowLeft') { b.x0 = Math.max(0, b.x0 - step); b.x1 = b.x0 + w; }
+            if (e.key === 'ArrowRight') { b.x0 = Math.min(p.w_pt - w, b.x0 + step); b.x1 = b.x0 + w; }
+            if (e.key === 'ArrowUp') { b.y0 = Math.max(0, b.y0 - step); b.y1 = b.y0 + h; }
+            if (e.key === 'ArrowDown') { b.y0 = Math.min(p.h_pt - h, b.y0 + step); b.y1 = b.y0 + h; }
+          }
+        });
+        renderBoxes();
+        e.preventDefault();
+      }
+      return;
+    }
+
     if (selectedIds.size > 0 && (e.key === 'Delete' || e.key === 'Backspace')) {
+      pushHistory();
       boxes = boxes.filter(b => !selectedIds.has(b._id));
       selectedIds.clear();
       renderBoxes();
@@ -1190,7 +1280,7 @@ if (!PAGES || PAGES.length === 0) {
     }
   } catch (err) {}
 
-saveBtn.addEventListener('click', () => {
+  saveBtn.addEventListener('click', () => {
     const origHTML = saveBtn.innerHTML;
     saveBtn.textContent = 'সেভ হচ্ছে...';
     try {
@@ -1201,25 +1291,11 @@ saveBtn.addEventListener('click', () => {
         x0: Math.round(b.x0 * 10) / 10,
         y0: Math.round(b.y0 * 10) / 10,
         x1: Math.round(b.x1 * 10) / 10,
-        y1: Math.round(b.y1 * 10) / 10
+        y1: Math.round(b.y1 * 10) / 10,
+        w_gap: Boolean(b.w_gap)
       }));
-      const payload = JSON.stringify({ ts: Date.now(), boxes: clean });
+      const payload = JSON.stringify({ ts: Date.now(), w_gap_pt: wGapPt, boxes: clean });
       const parentDoc = window.parent.document;
-      const parentWin = window.parent;
-
-      /* পিসি মোডে সেভ বাটনে ক্লিক করলে বক্স এডিটর বন্ধ করে গ্যাপ সেটআপ খোলার সিগন্যাল */
-      const mode = parentDoc.body.getAttribute('data-device-mode')
-                || parentWin.sessionStorage.getItem('ps_device_mode')
-                || 'pc';
-      if (mode !== 'phone' && parentWin.innerWidth >= 960) {
-        parentWin.sessionStorage.setItem('ps_active_right_tab', 'gap');
-        const exps = parentDoc.querySelectorAll('.block-container [data-testid="stExpander"]');
-        if (exps.length >= 2) {
-          const bDet = exps[0].querySelector('details');
-          if (bDet) bDet.dataset.appliedTab = '';
-        }
-      }
-
       const inp = parentDoc.querySelector('input[placeholder="BOX_JSON_BRIDGE_MARKER"]')
                || parentDoc.querySelector('input[aria-label="BOX_JSON_BRIDGE"]');
       if (inp) {
