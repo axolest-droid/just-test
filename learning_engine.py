@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-learning_engine.py — ডুপ্লিকেট-মুক্ত রিইনফোর্সমেন্ট লার্নিং এবং গিটহাব সিঙ্ক ইঞ্জিন
+app.py — SMART SCANNER (True Two-Stage Hybrid: Layout Parser + KB Tag Engine)
+================================================================================
+AI INSTRUCTION MANUAL (যেকোনো এআই বটের জন্য নির্দেশনা):
+1. এই প্রোগ্রামের সমস্ত নিয়ম `knowledge_base.json` ফাইলে সংরক্ষিত আছে।
+2. স্টেজ ১ (Layout Parser): ওপেনসিভি কন্টুর ও মরফোলজি দিয়ে প্রতিটি লাইনের জ্যামিতিক বক্স,
+   বাম মার্জিন এবং অপশনের গোল বৃত্ত (`count_option_circles`) শনাক্ত করে।
+3. স্টেজ ২ (OCR + Tag Engine): Tesseract OCR (`ben+eng` ও বাম মার্জিনের `eng` স্ট্রিপ)
+   এবং `knowledge_base.json`-এর ট্যাগ মিলিয়ে প্রশ্ন শুরু ও সমাধানের ('উত্তর:', 'ব্যাখ্যা:')
+   ঠিক উপরে বক্স কাটে।
+4. গিটহাবে নতুন নিয়ম সেভ করার জন্য `ADMIN_PIN` দ্বারা নিরাপত্তা নিশ্চিত করা হয়েছে।
 ================================================================================
 """
 
@@ -9,625 +18,1904 @@ import os
 import re
 import json
 import base64
-import requests
-import fitz
 import cv2
+import fitz
 import numpy as np
+import pandas as pd
 import pytesseract
 import streamlit as st
 
-KB_FILENAME = "knowledge_base.json"
-DEFAULT_REPO = "axolest-droid/just-test"
-DEFAULT_BRANCH = "main"
+# উইন্ডোজ পিসিতে লোকালহোস্টে চালানোর সময় ডিফল্ট Tesseract পাথ অটো-ডিটেক্ট করা
+if os.name == "nt":
+    for _t_path in (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expanduser(r"~\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
+    ):
+        if os.path.exists(_t_path):
+            pytesseract.pytesseract.tesseract_cmd = _t_path
+            break
 
-CATEGORY_LABELS_BN = {
-    "question_tags": "প্রশ্ন",
-    "solution_tags": "সমাধান",
-    "header_noise_patterns": "জলছাপ",
-    "bullet_stop_chars": "বুলেট",
-    "valid_crop_keywords": "কীওয়ার্ড"
-}
+try:
+    import streamlit.components.v1 as components
+except Exception:
+    components = None
 
-EXCLUSIVE_CATEGORIES = ["question_tags", "solution_tags", "header_noise_patterns"]
+from learning_engine import (
+    load_knowledge_base,
+    commit_rule_to_kb,
+    analyze_user_corrections,
+    verify_admin_pin,
+    find_all_tag_conflicts,
+    resolve_tag_conflicts,
+    sync_all_kb_files,
+    CATEGORY_LABELS_BN,
+    KB_FILENAME
+)
 
+# ১. পেজ কনফিগারেশন
+st.set_page_config(
+    page_title="SMART SCANNER",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
-def get_default_kb():
-    return {
-        "question_tags": [
-            "Q", "Question", "Ques", "Prob", "Problem", "Ex", "Example",
-            "প্রশ্ন", "এমসিকিউ", "সমস্যা", "উদাহরণ", "❑", "▫", "▪", "■", "□"
-        ],
-        "solution_tags": [
-            "Sol", "Soln", "Solⁿ", "Sol^n", "So1", "So1n", "S0l", "S0ln", "5ol", "5oln",
-            "Solution", "Ans", "Answer", "Shortcut", "Hint", "Hints", "Note", "[Note", "[Note:",
-            "উত্তর", "উত্ত", "উওর", "উত্তব", "উত্তন", "উত্তম", "ডত্তর", "ডওর", "ডত্তব", "ত্তর", "ত্তব", "উঃ", "উ:", "ত্তঃ", "ত্ত:",
-            "সমাধান", "সমাধা", "মাধান", "সলভ", "সল্‌ভ",
-            "ব্যাখ্যা", "ব্যখ্যা", "ব্যাখা", "ব্যখা", "্যাখ্যা", "াখ্যা", "রাখ্যা", "য্যাখ্যা", "বাখ্যা", "ব্যাখ",
-            "বিকল্প", "িকল্প", "শর্টকাট",
-            "প্র্যাকটিস প্রবলেম", "প্র্যাকটিস", "প্রশ্ন-সলভ", "প্রশ্ন-সল্‌ভ",
-            "Written", "লিখিত", "বিগত ভর্তি", "DËi:", "DËi", "mgvavb", "e¨vL¨v"
-        ],
-        "header_noise_patterns": [
-            "Educationalpdf", "Educationaf", "Rhombus\\s*Publications",
-            "পরিমাণগত\\s*রসায়ন", "ACS\\s*Varsity", "ACS\\s*Chemistry", "ACS\\s*Cliemistry"
-        ],
-        "bullet_stop_chars": ["➢", "➤", "➣", "•", "♦", "►"],
-        "option_units": ["mol", "L", "g", "kg", "mL", "ml", "cm", "mm", "m", "gm", "sec", "min", "s", "×", "x", "10^", "10"],
-        "dotless_question_keywords": [
-            "কত", "কোনটি", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
-            "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "মোল", "লিটার", "গ্রাম",
-            "গ্যাস", "পরমাণু", "অণু", "STP", "NTP"
-        ],
-        "valid_crop_keywords": [
-            "কত", "কোনটি", "কোন", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
-            "নির্ণয়", "নির্ণয়", "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "ঘনমাত্রা",
-            "মোল", "লিটার", "গ্যাস", "পরমাণু", "অণু", "বিক্রিয়া", "বিক্রিয়া", "লেখচিত্র",
-            "what", "which", "find", "calculate", "value"
-        ],
-        "equation_question_guard_words": [
-            "কত", "কোনটি", "হলে", "যদি", "নির্ণয়", "নির্ণয়", "সমান", "অর্ধেক", "দ্বিগুণ"
-        ],
-        "layout_thresholds": {
-            "max_question_number": 160,
-            "min_start_gap_pt": 16.0,
-            "max_q_x_offset": 52.0,
-            "max_sol_x_offset": 120.0,
-            "max_internal_blank_gap_pt": 24.0
-        }
-    }
+# ২. বাহ্যিক style.css ফাইল লোড করা
+def load_external_css(css_file="style.css"):
+    if os.path.exists(css_file):
+        with open(css_file, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+load_external_css()
 
-def _normalize_tag_key(val):
-    """তুলনা করার জন্য ট্যাগ থেকে অতিরিক্ত স্ল্যাশ ও স্পেস সরিয়ে ছোট হাতের অক্ষরে রূপান্তর করে।"""
-    s = str(val).strip()
-    s = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", s)
-    return s.strip().lower()
+# ==============================================================================
+# ৩. কেন্দ্রীয় নলেজ-বেস (knowledge_base.json) থেকে সব নিয়ম ও ট্যাগ লোড করা
+# ==============================================================================
+KB = load_knowledge_base()
+Q_TAGS = KB.get("question_tags", [])
+SOL_TAGS = KB.get("solution_tags", [])
+HEADER_NOISE_LIST = KB.get("header_noise_patterns", [])
+BULLET_STOP_LIST = KB.get("bullet_stop_chars", ["➢", "➤", "➣", "•", "♦", "►"])
+OPTION_UNITS_LIST = KB.get("option_units", ["mol", "L", "g", "kg", "mL", "ml", "cm", "mm", "m", "gm", "sec", "min", "s", "×", "x", "10^"])
+DOTLESS_KW_LIST = KB.get("dotless_question_keywords", [])
+VALID_CROP_KW_LIST = KB.get("valid_crop_keywords", [])
+EQ_GUARD_KW_LIST = KB.get("equation_question_guard_words", [])
+LAYOUT_CFG = KB.get("layout_thresholds", {})
 
+MAX_Q_NUMBER = int(LAYOUT_CFG.get("max_question_number", 160))
+MIN_START_GAP_PT = float(LAYOUT_CFG.get("min_start_gap_pt", 16.0))
+MAX_Q_X_OFFSET = float(LAYOUT_CFG.get("max_q_x_offset", 52.0))
+MAX_SOL_X_OFFSET = float(LAYOUT_CFG.get("max_sol_x_offset", 120.0))
+DEFAULT_BLANK_GAP_PT = int(float(LAYOUT_CFG.get("max_internal_blank_gap_pt", 24.0)))
 
-def _dedup_list_preserve_order(items):
-    """একই তালিকার ভেতর থেকে ডুপ্লিকেট ট্যাগ (Case-insensitive) বাদ দেয়।"""
-    seen = set()
-    out = []
-    for item in items:
-        s = str(item).strip()
-        if not s:
-            continue
-        k = _normalize_tag_key(s)
-        if k not in seen:
-            seen.add(k)
-            out.append(s)
-    return out
+def parse_box_selection_string(sel_str, max_count):
+    sel_str = sel_str.strip()
+    if not sel_str:
+        return set(range(max_count))
+    selected = set()
+    for part in sel_str.split(","):
+        part = part.strip()
+        if "-" in part:
+            b = part.split("-", 1)
+            if b[0].strip().isdigit() and b[1].strip().isdigit():
+                for idx in range(max(1, int(b[0])), min(max_count, int(b[1])) + 1):
+                    selected.add(idx - 1)
+        elif part.isdigit():
+            idx = int(part)
+            if 1 <= idx <= max_count:
+                selected.add(idx - 1)
+    return selected
 
+# ৪. মিনিমাল সাইডবার ও পিন-সুরক্ষিত লাইভ ট্রেনিং প্যানেল
+with st.sidebar:
+    st.markdown("""
+    <div class="sb-brand">
+        <span class="sb-brand-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5E9E8B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span>সেটিংস</span>
+        </span>
+        <span class="sb-engine-pill">STUDIO</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-def _read_txt_lines(filename):
-    if not os.path.exists(filename):
-        return []
-    with open(filename, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+    with st.popover("পেজ সেটআপ", use_container_width=True):
+        PAGE_MODE = st.radio("মোড", ["অটো", "বই", "স্লাইড"], index=0, horizontal=True)
+        COLUMNS_PER_PAGE = st.radio("কলাম", [1, 2], index=1, horizontal=True)
+        PAGE_RANGE_TEXT = st.text_input("পৃষ্ঠা", "", placeholder="1-5 বা ফাঁকা")
+        HEADER_TITLE = st.text_input("শিরোনাম", "MCQ Practice Sheet")
+        INVERT_DARK_OUT = st.checkbox("সাদা ব্যাকগ্রাউন্ড", value=False)
 
-
-def load_knowledge_base():
-    kb = get_default_kb()
-    if os.path.exists(KB_FILENAME):
-        try:
-            with open(KB_FILENAME, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            for k, v in loaded.items():
-                if isinstance(v, list):
-                    kb[k] = _dedup_list_preserve_order(v)
-                elif isinstance(v, dict) and k in kb:
-                    kb[k].update(v)
-                else:
-                    kb[k] = v
-        except Exception:
-            pass
-
-    # টেক্সট ফাইলে ম্যানুয়ালি নতুন কোনো ট্যাগ যোগ করা হলে তা গ্রহণ করা
-    txt_q = _read_txt_lines("question_tags.txt")
-    txt_s = _read_txt_lines("solution_tags.txt")
-    if txt_q:
-        kb["question_tags"] = _dedup_list_preserve_order(txt_q + kb.get("question_tags", []))
-    if txt_s:
-        kb["solution_tags"] = _dedup_list_preserve_order(txt_s + kb.get("solution_tags", []))
-
-    for k in list(kb.keys()):
-        if isinstance(kb[k], list):
-            kb[k] = _dedup_list_preserve_order(kb[k])
-
-    return kb
-
-
-def find_all_tag_conflicts(kb=None):
-    """
-    সবগুলো ফাইল (JSON ও TXT) সরাসরি চেক করে আন্তঃক্যাটাগরি সংঘর্ষ এবং
-    একই ফাইলের ভেতরের ডুপ্লিকেট ট্যাগগুলোর নাম ও অবস্থান বের করে।
-    """
-    raw_kb = get_default_kb()
-    if os.path.exists(KB_FILENAME):
-        try:
-            with open(KB_FILENAME, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            for k, v in loaded.items():
-                if isinstance(v, list):
-                    raw_kb[k] = [str(x).strip() for x in v if str(x).strip()]
-        except Exception:
-            pass
-
-    txt_sources = {
-        "question_tags": _read_txt_lines("question_tags.txt"),
-        "solution_tags": _read_txt_lines("solution_tags.txt"),
-    }
-
-    cat_short = {
-        "question_tags": "প্রশ্ন",
-        "solution_tags": "সমাধান",
-        "header_noise_patterns": "জলছাপ"
-    }
-
-    key_info = {}
-
-    for cat in EXCLUSIVE_CATEGORIES:
-        json_list = raw_kb.get(cat, [])
-        txt_list = txt_sources.get(cat, [])
-
-        # JSON ফাইলে কতবার আছে
-        json_counts = {}
-        for item in json_list:
-            nk = _normalize_tag_key(item)
-            if not nk:
-                continue
-            json_counts[nk] = json_counts.get(nk, 0) + 1
-            info = key_info.setdefault(nk, {
-                "display": re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip()),
-                "cats": [],
-                "dup_notes": []
-            })
-            if cat not in info["cats"]:
-                info["cats"].append(cat)
-
-        # TXT ফাইলে কতবার আছে
-        txt_counts = {}
-        for item in txt_list:
-            nk = _normalize_tag_key(item)
-            if not nk:
-                continue
-            txt_counts[nk] = txt_counts.get(nk, 0) + 1
-            info = key_info.setdefault(nk, {
-                "display": re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip()),
-                "cats": [],
-                "dup_notes": []
-            })
-            if cat not in info["cats"]:
-                info["cats"].append(cat)
-
-        # একই ক্যাটাগরির ভেতরে ডুপ্লিকেট হলে নোট রাখা
-        all_nks = set(json_counts.keys()) | set(txt_counts.keys())
-        for nk in all_nks:
-            jc = json_counts.get(nk, 0)
-            tc = txt_counts.get(nk, 0)
-            max_c = max(jc, tc)
-            if max_c > 1:
-                key_info[nk]["dup_notes"].append(f"{cat_short[cat]}×{max_c}")
-
-    conflicts = []
-    internal_dup_count = 0
-
-    for nk, info in key_info.items():
-        cats = info["cats"]
-        d_notes = info["dup_notes"]
-        if len(cats) > 1 or len(d_notes) > 0:
-            if len(d_notes) > 0:
-                internal_dup_count += 1
-            where_parts = [cat_short.get(c, c) for c in cats]
-            where_str = " + ".join(where_parts)
-            if d_notes:
-                where_str = ", ".join(d_notes) if len(cats) == 1 else f"{where_str} ({', '.join(d_notes)})"
-            conflicts.append({
-                "norm_key": nk,
-                "display": info["display"],
-                "categories": cats,
-                "where": where_str,
-                "default_cat": cats[0]
-            })
-
-    return conflicts, internal_dup_count
-
-
-def check_tag_conflict(category, new_value, kb=None):
-    """একটি নতুন ট্যাগ অন্য কোনো ক্যাটাগরিতে আগে থেকেই আছে কি না তা পরীক্ষা করে।"""
-    if kb is None:
-        kb = load_knowledge_base()
-
-    nk = _normalize_tag_key(new_value)
-    other_cats = []
-    already_in_same = False
-
-    if category in EXCLUSIVE_CATEGORIES:
-        for cat in EXCLUSIVE_CATEGORIES:
-            existing_keys = {_normalize_tag_key(x) for x in kb.get(cat, [])}
-            if nk in existing_keys:
-                if cat == category:
-                    already_in_same = True
-                else:
-                    other_cats.append(cat)
-    else:
-        existing_keys = {_normalize_tag_key(x) for x in kb.get(category, [])}
-        if nk in existing_keys:
-            already_in_same = True
-
-    return {
-        "conflict": len(other_cats) > 0,
-        "other_cats": other_cats,
-        "already_in_same": already_in_same
-    }
-
-
-def _get_github_credentials():
-    token = None
-    repo = DEFAULT_REPO
-    branch = DEFAULT_BRANCH
-    try:
-        if "GITHUB_TOKEN" in st.secrets:
-            token = st.secrets["GITHUB_TOKEN"]
-        if "GITHUB_REPO" in st.secrets:
-            repo = st.secrets["GITHUB_REPO"]
-        if "GITHUB_BRANCH" in st.secrets:
-            branch = st.secrets["GITHUB_BRANCH"]
-    except Exception:
-        pass
-
-    if not token:
-        token = os.environ.get("GITHUB_TOKEN", "")
-    return token.strip() if token else None, repo.strip(), branch.strip()
-
-
-def verify_admin_pin(input_pin):
-    secret_pin = None
-    try:
-        if "ADMIN_PIN" in st.secrets:
-            secret_pin = str(st.secrets["ADMIN_PIN"]).strip()
-    except Exception:
-        pass
-
-    if not secret_pin:
-        secret_pin = os.environ.get("ADMIN_PIN", "").strip()
-
-    if not secret_pin:
-        secret_pin = "1234"
-
-    return str(input_pin).strip() == secret_pin
-
-
-def push_file_to_github(filepath, content_str, commit_message):
-    token, repo, branch = _get_github_credentials()
-    if not token:
-        return False, "গিটহাব টোকেন পাওয়া যায়নি (শুধুমাত্র লোকাল সেশনে সেভ হয়েছে)।"
-
-    api_url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-    }
-
-    try:
-        sha = None
-        get_resp = requests.get(api_url, headers=headers, params={"ref": branch}, timeout=10)
-        if get_resp.status_code == 200:
-            sha = get_resp.json().get("sha")
-
-        encoded_content = base64.b64encode(content_str.encode("utf-8")).decode("ascii")
-        payload = {
-            "message": commit_message,
-            "content": encoded_content,
-            "branch": branch
-        }
-        if sha:
-            payload["sha"] = sha
-
-        put_resp = requests.put(api_url, headers=headers, json=payload, timeout=12)
-        if put_resp.status_code in (200, 201):
-            return True, f"গিটহাব রিপোজিটরিতে ({repo}) স্থায়ীভাবে সেভ হয়েছে!"
-        else:
-            err_msg = put_resp.json().get("message", f"HTTP {put_resp.status_code}")
-            return False, f"গিটহাব এপিআই ত্রুটি: {err_msg}"
-    except Exception as e:
-        return False, f"গিটহাব সংযোগ ত্রুটি: {e}"
-
-
-def sync_all_kb_files(kb, commit_note="Sync and deduplicate knowledge base"):
-    """
-    knowledge_base.json, question_tags.txt এবং solution_tags.txt ফাইল তিনটি
-    ডুপ্লিকেটমুক্ত করে একসাথে লোকালি ও গিটহাবে সেভ করে।
-    """
-    for k in list(kb.keys()):
-        if isinstance(kb[k], list):
-            kb[k] = _dedup_list_preserve_order(kb[k])
-
-    json_str = json.dumps(kb, ensure_ascii=False, indent=2)
-    q_txt = "# নিচে প্রতি লাইনে একটি করে প্রশ্ন শুরুর ট্যাগ লিখুন\n" + "\n".join(kb.get("question_tags", [])) + "\n"
-    s_txt = "# নিচে প্রতি লাইনে একটি করে সমাধান বা বাদ দেওয়ার ট্যাগ লিখুন\n" + "\n".join(kb.get("solution_tags", [])) + "\n"
-
-    try:
-        with open(KB_FILENAME, "w", encoding="utf-8") as f:
-            f.write(json_str)
-        with open("question_tags.txt", "w", encoding="utf-8") as f:
-            f.write(q_txt)
-        with open("solution_tags.txt", "w", encoding="utf-8") as f:
-            f.write(s_txt)
-    except Exception:
-        pass
-
-    push_file_to_github("question_tags.txt", q_txt, f"{commit_note} [sync question_tags.txt]")
-    push_file_to_github("solution_tags.txt", s_txt, f"{commit_note} [sync solution_tags.txt]")
-    ok, msg = push_file_to_github(KB_FILENAME, json_str, commit_note)
-    return ok, msg
-
-
-def resolve_tag_conflicts(resolutions_map, commit_note="Resolved duplicate tag conflicts"):
-    """
-    ব্যবহারকারীর নির্বাচন অনুযায়ী ডুপ্লিকেট ট্যাগগুলো নির্দিষ্ট একটি ক্যাটাগরিতে রেখে
-    বাকি সব ক্যাটাগরি থেকে মুছে ফাইলগুলো ডুপ্লিকেটমুক্ত করে।
-    """
-    kb = load_knowledge_base()
-
-    for norm_k, chosen_cat in resolutions_map.items():
-        raw_display = None
-        for cat in EXCLUSIVE_CATEGORIES:
-            new_list = []
-            for item in kb.get(cat, []):
-                if _normalize_tag_key(item) == norm_k:
-                    if raw_display is None:
-                        raw_display = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip())
-                else:
-                    new_list.append(item)
-            kb[cat] = new_list
-
-        if chosen_cat in EXCLUSIVE_CATEGORIES and raw_display:
-            val_to_add = re.escape(raw_display) if chosen_cat == "header_noise_patterns" else raw_display
-            kb[chosen_cat].append(val_to_add)
-
-    return sync_all_kb_files(kb, commit_note)
-
-
-def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF pattern", force_move=False):
-    val = str(new_value).strip()
-    if not val:
-        return False, "ফাঁকা মান সেভ করা যাবে না।"
-
-    kb = load_knowledge_base()
-    if category not in kb or not isinstance(kb[category], list):
-        return False, f"অজানা ক্যাটাগরি: {category}"
-
-    raw_clean = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", val).strip()
-    nk = _normalize_tag_key(raw_clean)
-
-    conflict_info = check_tag_conflict(category, raw_clean, kb)
-    if conflict_info["conflict"] and not force_move:
-        other_names = ", ".join(CATEGORY_LABELS_BN.get(c, c) for c in conflict_info["other_cats"])
-        other_keys = ",".join(conflict_info["other_cats"])
-        return (
-            False,
-            f"CONFLICT|{other_keys}|⚠️ '{raw_clean}' ট্যাগটি ইতিমধ্যে [{other_names}]-এ আছে! আপনি কি এটিকে কোন ক্যাটাগরিতে রাখতে চান তা নির্বাচন করবেন?"
+    with st.expander("মার্জিন ও মাপ", expanded=False):
+        QUESTION_GAP_PT = st.slider("গ্যাপ (pt)", 4, 40, 12, step=2)
+        MIN_Q_HEIGHT_PT = st.slider("ন্যূনতম উচ্চতা", 10, 45, 16, step=2)
+        RIGHT_EDGE_TRIM_PT = st.slider("ডান ছাঁটাই", 0, 35, 0, step=1)
+        MAX_BLANK_GAP_PT = st.slider(
+            "সর্বোচ্চ ভেতরের গ্যাপ",
+            12, 80, DEFAULT_BLANK_GAP_PT, step=2,
+            help="প্রশ্নের নিচে উত্তর লেখার জন্য বড় ফাঁকা জায়গা থাকলে এই মাপের পর বক্সটি স্বয়ংক্রিয়ভাবে কেটে যাবে।"
         )
 
-    # যদি force_move=True হয়, তবে অন্য সব সাংঘর্ষিক ক্যাটাগরি থেকে আগে মুছে ফেলা হবে
-    if category in EXCLUSIVE_CATEGORIES:
-        for other_c in EXCLUSIVE_CATEGORIES:
-            if other_c != category:
-                kb[other_c] = [x for x in kb.get(other_c, []) if _normalize_tag_key(x) != nk]
+    with st.expander("ব্যাচ এডিট", expanded=False):
+        BATCH_TARGET = st.selectbox(
+            "টার্গেট",
+            ["সব বক্স", "নির্দিষ্ট বক্স", "বাম কলাম", "ডান কলাম", "নির্দিষ্ট পেজ"]
+        )
+        BATCH_BOX_NUMS = ""
+        BATCH_PAGE_NO = 1
+        if BATCH_TARGET == "নির্দিষ্ট বক্স":
+            BATCH_BOX_NUMS = st.text_input("বক্স নং", "1-5", placeholder="1-4, 7")
+        elif BATCH_TARGET == "নির্দিষ্ট পেজ":
+            BATCH_PAGE_NO = st.number_input("পেজ নং", min_value=1, value=1, step=1)
 
-    val_to_save = re.escape(raw_clean) if category == "header_noise_patterns" else raw_clean
-    if not any(_normalize_tag_key(x) == nk for x in kb[category]):
-        kb[category].append(val_to_save)
-    elif not force_move:
-        return True, f"'{raw_clean}' ইতিমধ্যে '{CATEGORY_LABELS_BN.get(category, category)}'-এ যুক্ত আছে।"
+        b_col1, b_col2 = st.columns(2)
+        with b_col1:
+            BATCH_DX = st.number_input("ডানে/বামে (X)", value=0.0, step=2.0, format="%.1f")
+            BATCH_DW = st.number_input("প্রস্থ (W)", value=0.0, step=2.0, format="%.1f")
+        with b_col2:
+            BATCH_DY = st.number_input("নিচে/উপরে (Y)", value=0.0, step=2.0, format="%.1f")
+            BATCH_DH = st.number_input("উচ্চতা (H)", value=0.0, step=2.0, format="%.1f")
 
-    return sync_all_kb_files(kb, f"{commit_note} [{category}: {raw_clean}]")
+        APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
+    # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে প্যানেল
+    with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
+        XRAY_MODE = st.checkbox("এক্স-রে মোড", value=False)
 
-def _extract_lines_from_clip(page, clip_rect):
-    words = []
-    for wx0, wy0, wx1, wy1, txt, *_ in page.get_text("words"):
-        if clip_rect.x0 - 3 <= wx0 <= clip_rect.x1 + 3 and clip_rect.y0 - 3 <= wy0 <= clip_rect.y1 + 3:
-            if txt.strip():
-                words.append((wx0, wy0, wx1, wy1, txt.strip()))
+        if not st.session_state.get("is_admin_unlocked", False):
+            pin_in = st.text_input("পিন", type="password", placeholder="🔒 পিন...", key="sb_pin_input", label_visibility="collapsed")
+            if st.button("আনলক", key="btn_unlock_admin"):
+                if verify_admin_pin(pin_in):
+                    st.session_state["is_admin_unlocked"] = True
+                    st.rerun()
+                else:
+                    st.error("ভুল পিন!")
+        else:
+            RULE_CAT_LABELS = {
+                "সমাধান": "solution_tags",
+                "প্রশ্ন": "question_tags",
+                "জলছাপ": "header_noise_patterns",
+                "বুলেট": "bullet_stop_chars",
+                "কীওয়ার্ড": "valid_crop_keywords"
+            }
+            CAT_KEY_TO_LABEL = {v: k for k, v in RULE_CAT_LABELS.items()}
 
+            sel_cat_label = st.selectbox("ক্যাটাগরি", list(RULE_CAT_LABELS.keys()))
+            manual_rule_val = st.text_input("ট্যাগ", "", placeholder="ট্যাগ লিখুন...")
+
+            if st.button("✓ সেভ", key="btn_manual_rule"):
+                if manual_rule_val.strip():
+                    cat_key = RULE_CAT_LABELS[sel_cat_label]
+                    raw_in = manual_rule_val.strip()
+                    ok, msg = commit_rule_to_kb(cat_key, raw_in, "Manual rule", force_move=False)
+                    if ok:
+                        st.session_state.pop("sb_conflict_state", None)
+                        st.toast("সেভ হয়েছে!")
+                        st.rerun()
+                    elif msg.startswith("CONFLICT|"):
+                        parts = msg.split("|", 2)
+                        st.session_state["sb_conflict_state"] = {
+                            "val": raw_in,
+                            "target_cat": cat_key,
+                            "other_cats": parts[1].split(",")
+                        }
+                    else:
+                        st.warning(msg)
+
+            c_state = st.session_state.get("sb_conflict_state")
+            if c_state:
+                other_short = ", ".join(CAT_KEY_TO_LABEL.get(c, c) for c in c_state["other_cats"])
+                st.error(f"⚠️ '{c_state['val']}' আছে: {other_short}")
+                choose_options = {
+                    "প্রশ্ন": "question_tags",
+                    "সমাধান": "solution_tags",
+                    "জলছাপ": "header_noise_patterns"
+                }
+                def_label = CAT_KEY_TO_LABEL.get(c_state["target_cat"], "প্রশ্ন")
+                opt_list = list(choose_options.keys())
+                def_idx = opt_list.index(def_label) if def_label in opt_list else 0
+                resolved_label = st.selectbox(
+                    "রাখুন:",
+                    opt_list,
+                    index=def_idx,
+                    key="sb_conflict_resolve_sel"
+                )
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    if st.button("✓ স্থানান্তর", key="btn_confirm_move"):
+                        chosen_k = choose_options[resolved_label]
+                        commit_rule_to_kb(chosen_k, c_state["val"], f"Moved to {chosen_k}", force_move=True)
+                        st.session_state.pop("sb_conflict_state", None)
+                        st.toast("স্থানান্তরিত!")
+                        st.rerun()
+                with rc2:
+                    if st.button("✕ বাতিল", key="btn_cancel_move"):
+                        st.session_state.pop("sb_conflict_state", None)
+                        st.rerun()
+
+            st.markdown("---")
+            conflicts_list, _ = find_all_tag_conflicts(KB)
+            cat_choice_map = {
+                "প্রশ্ন": "question_tags",
+                "সমাধান": "solution_tags",
+                "জলছাপ": "header_noise_patterns",
+                "মুছুন": "DELETE"
+            }
+            rev_choice_map = {v: k for k, v in cat_choice_map.items()}
+
+            if conflicts_list:
+                st.warning(f"🧹 ডুপ্লিকেট: {len(conflicts_list)}টি")
+                resolutions_map = {}
+                choice_keys = list(cat_choice_map.keys())
+                for c_idx, c_item in enumerate(conflicts_list):
+                    def_lbl = rev_choice_map.get(c_item.get("default_cat"), "প্রশ্ন")
+                    d_idx = choice_keys.index(def_lbl) if def_lbl in choice_keys else 0
+                    sel_res = st.selectbox(
+                        f"'{c_item['display']}' • [{c_item['where']}]",
+                        choice_keys,
+                        index=d_idx,
+                        key=f"dup_fix_{c_idx}_{c_item['norm_key']}"
+                    )
+                    resolutions_map[c_item["norm_key"]] = cat_choice_map[sel_res]
+
+                if st.button("🧹 ফিক্স", key="btn_fix_all_dups"):
+                    resolve_tag_conflicts(resolutions_map)
+                    st.toast("ডুপ্লিকেট ফিক্সড!")
+                    st.rerun()
+            else:
+                st.caption("✅ ডুপ্লিকেট নেই")
+
+            with st.popover("🔍 ট্যাগ তালিকা", use_container_width=True):
+                all_tag_items = []
+                for ck, clbl in [("question_tags", "প্রশ্ন"), ("solution_tags", "সমাধান"), ("header_noise_patterns", "জলছাপ")]:
+                    for t_val in KB.get(ck, []):
+                        disp_t = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(t_val).strip())
+                        all_tag_items.append((f"{disp_t} • [{clbl}]", disp_t, ck))
+
+                if all_tag_items:
+                    sel_tag_str = st.selectbox("ট্যাগ", [x[0] for x in all_tag_items], key="inspect_tag_sel")
+                    picked = next(x for x in all_tag_items if x[0] == sel_tag_str)
+                    cur_lbl = rev_choice_map.get(picked[2], "প্রশ্ন")
+                    c_keys = list(cat_choice_map.keys())
+                    new_lbl = st.selectbox("রাখুন", c_keys, index=c_keys.index(cur_lbl), key="inspect_cat_sel")
+                    if st.button("✓ আপডেট", key="btn_inspect_update"):
+                        target_c = cat_choice_map[new_lbl]
+                        resolve_tag_conflicts({picked[1].lower(): target_c}, f"Updated {picked[1]}")
+                        st.toast("আপডেট হয়েছে!")
+                        st.rerun()
+
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("🔄 সিঙ্ক", key="btn_manual_sync"):
+                    sync_all_kb_files(KB, "Manual sync")
+                    st.toast("সিঙ্ক সম্পন্ন!")
+                    st.rerun()
+            with bc2:
+                if st.button("🔒 লক", key="btn_lock_admin"):
+                    st.session_state["is_admin_unlocked"] = False
+                    st.rerun()
+
+        st.download_button(
+            label="⬇ ব্যাকআপ",
+            data=json.dumps(KB, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=KB_FILENAME,
+            mime="application/json",
+            key="dl_kb_backup"
+        )
+
+    mode_short = "AUTO" if PAGE_MODE == "অটো" else ("BOOK" if PAGE_MODE == "বই" else "SLIDE")
+    range_short = PAGE_RANGE_TEXT.strip() if PAGE_RANGE_TEXT.strip() else "ALL"
+
+    st.markdown(f"""
+    <div class="sb-summary-card">
+        <div class="sb-summary-row"><span>মোড</span><span class="sb-summary-val">{mode_short} • {COLUMNS_PER_PAGE}C</span></div>
+        <div class="sb-summary-row"><span>পৃষ্ঠা • গ্যাপ</span><span class="sb-summary-val">{range_short} • {QUESTION_GAP_PT}pt</span></div>
+        <div class="sb-summary-row"><span>ট্যাগ</span><span class="sb-summary-val">{len(Q_TAGS)}Q • {len(SOL_TAGS)}S</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    try:
+        from info_panel import render_info_panel
+        render_info_panel()
+    except Exception:
+        pass
+
+# ==============================================================================
+# ৫. ডায়নামিক রেগুলার এক্সপ্রেশন ইঞ্জিন (knowledge_base.json থেকে চালিত)
+# ==============================================================================
+SC = 2.5
+
+q_prefix_pattern = "|".join(re.escape(t) for t in sorted(Q_TAGS, key=len, reverse=True)) if Q_TAGS else "Q|প্রশ্ন"
+sol_prefix_pattern = "|".join(re.escape(t) for t in sorted(SOL_TAGS, key=len, reverse=True)) if SOL_TAGS else "Sol|সমাধান|উত্তর"
+bullet_chars_escaped = "".join(re.escape(c) for c in BULLET_STOP_LIST)
+unit_pattern = "|".join(re.escape(u) for u in sorted(OPTION_UNITS_LIST, key=len, reverse=True))
+dotless_kw_pattern = "|".join(re.escape(w) for w in DOTLESS_KW_LIST) if DOTLESS_KW_LIST else "কত|কোনটি"
+valid_crop_kw_pattern = "|".join(re.escape(w) for w in VALID_CROP_KW_LIST) if VALID_CROP_KW_LIST else "কত|কোনটি"
+eq_guard_kw_pattern = "|".join(re.escape(w) for w in EQ_GUARD_KW_LIST) if EQ_GUARD_KW_LIST else "কত|কোনটি|হলে|যদি"
+noise_pattern_str = "|".join(HEADER_NOISE_LIST) if HEADER_NOISE_LIST else "Educationalpdf"
+
+NUM_RE = re.compile(
+    rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-\ঃ\/\|]*\s*)?([0-9০-৯]{{1,3}})(?:[\.\)\]\:\ঃ\…]+|(?=[A-Za-zঅ-ঔক-হ]))(?![0-9০-৯])",
+    re.IGNORECASE
+)
+PURE_PREFIX_RE = re.compile(rf"^(?:{q_prefix_pattern})[\.\:\-\ঃ\/\|]*\s*[0-9০-৯]*$", re.IGNORECASE)
+OPT_TOKEN_RE = re.compile(r"^(?:[\(\[]?[a-dA-Dক-ঘ][\)\]\.]|[ⓐⓑⓒⓓⓔ①②③④⑧⑨])$")
+BULLET_STOP_RE = re.compile(rf"^[{bullet_chars_escaped}]\s*")
+OPT_UNIT_RE = re.compile(rf"^(?:{unit_pattern}|10\^?)$", re.IGNORECASE)
+BOARD_TAG_RE = re.compile(r"[\[\(].*(?:1[0-9]|2[0-6]).*[\]\)]")
+
+SOL_WORD_CORE = (
+    r"(?:[sS58\$][oO0aAeE][lL1Ii\|!t](?:[nNmMrRuU23\^\°\*\~\"\'\`\’\”\ⁿ\-\_]+)?|"
+    r"solution|ans(?:wer)?|shortcut|hints?|note|"
+    rf"{sol_prefix_pattern})"
+)
+
+SOL_TOKEN_RE = re.compile(
+    rf"^[\(\[\{{•\*{bullet_chars_escaped}\-\—\–\.\:\;\,\'\"\`\~\|]*{SOL_WORD_CORE}(?:$|[\s\:\ঃ\.\;\,\-\—\–\(\[\{{\"'\`\’\”\ⁿ\^\°\*\/\|0-9০-৯])",
+    re.IGNORECASE
+)
+
+INLINE_SOL_RE = re.compile(
+    rf"(?:^|\s|[\]\)\।\|]){SOL_WORD_CORE}(?:\s*[\:\ঃ\-\—\–\.\(\[]|\s+[nNⁿ\^]\b)",
+    re.IGNORECASE
+)
+
+HEADER_NOISE_RE = re.compile(rf"(?:{noise_pattern_str})", re.IGNORECASE)
+DOTLESS_KW_RE = re.compile(rf"(?:{dotless_kw_pattern})\b", re.IGNORECASE)
+VALID_CROP_KW_RE = re.compile(rf"(?:{valid_crop_kw_pattern})", re.IGNORECASE)
+EQ_GUARD_KW_RE = re.compile(rf"(?:{eq_guard_kw_pattern})", re.IGNORECASE)
+
+def _b2e_int(s):
+    t = s.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).strip()
+    return int(t) if t.isdigit() else None
+
+def is_solution_text(text):
+    if not text:
+        return False
+    clean = re.sub(r"[\u200c\u200d\ufeff]", "", text).strip()
+    if not clean:
+        return False
+    if SOL_TOKEN_RE.match(clean):
+        return True
+    stripped = clean.lstrip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-ⁿ^°*~\"'`)]} ")
+    if not stripped:
+        return False
+    if SOL_TOKEN_RE.match(stripped):
+        return True
+    s_low = stripped.lower()
+    head_part = re.split(r"[\:\ঃ\(\[\.\-]", s_low)[0].strip()
+    for tag in SOL_TAGS:
+        t_low = tag.lower().strip()
+        if not t_low:
+            continue
+        if s_low == t_low or s_low.startswith(t_low + ":") or s_low.startswith(t_low + "ঃ") or (head_part and head_part == t_low):
+            return True
+        if len(t_low) >= 4 and s_low.startswith(t_low):
+            return True
+    return False
+
+def line_has_solution_marker(line, joined_text, max_sol_x):
+    if not line:
+        return False, None
+    wx0, wy0, _, _, t0 = line[0]
+
+    if wx0 <= max_sol_x and is_solution_text(t0):
+        return True, wy0
+
+    if len(line) >= 2 and wx0 <= max_sol_x:
+        t1 = line[1][4].strip()
+        combined_01 = f"{t0}{t1}"
+        if is_solution_text(combined_01) or (re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. ")) and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)):
+            return True, wy0
+
+    for idx_w, w in enumerate(line[:6]):
+        if w[0] <= max_sol_x:
+            if is_solution_text(w[4]):
+                return True, w[1]
+            if idx_w + 1 < len(line):
+                comb = f"{w[4]}{line[idx_w + 1][4]}"
+                if is_solution_text(comb):
+                    return True, w[1]
+
+    if INLINE_SOL_RE.search(joined_text):
+        return True, wy0
+
+    return False, None
+
+# ==============================================================================
+# ৬. ইমেজ প্রসেসিং, অপশন সার্কেল ডিটেকশন ও স্মার্ট ব্ল্যাঙ্ক-গ্যাপ ছাঁটাই
+# ==============================================================================
+def parse_page_range(range_str, total_pages):
+    range_str = range_str.strip()
+    if not range_str:
+        return list(range(total_pages))
+    selected = set()
+    for part in range_str.split(","):
+        part = part.strip()
+        if "-" in part:
+            b = part.split("-", 1)
+            if b[0].strip().isdigit() and b[1].strip().isdigit():
+                for p in range(max(1, int(b[0])), min(total_pages, int(b[1])) + 1):
+                    selected.add(p - 1)
+        elif part.isdigit():
+            p = int(part)
+            if 1 <= p <= total_pages:
+                selected.add(p - 1)
+    return sorted(selected) if selected else list(range(total_pages))
+
+def page_to_gray(page, scale=SC):
+    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY)
+    g = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width)
+    if g.mean() < 110:
+        g = 255 - g
+    return g
+
+def clip_is_dark(page, clip):
+    pix = page.get_pixmap(matrix=fitz.Matrix(0.5, 0.5), clip=clip, colorspace=fitz.csGRAY, alpha=False)
+    return float(np.frombuffer(pix.samples, np.uint8).mean()) < 110
+
+def normalize_shadow_gray(gray_img):
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    bg = cv2.morphologyEx(gray_img, cv2.MORPH_CLOSE, kernel)
+    return cv2.divide(gray_img, bg, scale=255)
+
+def get_ink_mask(gray_img):
+    norm = normalize_shadow_gray(gray_img)
+    blur = cv2.GaussianBlur(norm, (3, 3), 0)
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 14)
+    clean = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    return clean > 0
+
+def count_option_circles(gray_img, x0_pt, y0_pt, x1_pt, y1_pt):
+    """ওপেনসিভি দিয়ে অপশনের গোল বৃত্ত (ক, খ, গ, ঘ বা ⓐ, ⓑ, ⓒ, ⓓ) নিখুঁতভাবে গণনা করে।"""
+    x0, y0 = max(0, int(x0_pt * SC)), max(0, int(y0_pt * SC))
+    x1, y1 = min(gray_img.shape[1], int(x1_pt * SC)), min(gray_img.shape[0], int(y1_pt * SC))
+    if x1 - x0 < 18 or y1 - y0 < 7:
+        return 0
+    roi = gray_img[y0:y1, x0:x1]
+    bw = cv2.adaptiveThreshold(roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 10)
+    cnts, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    circles = 0
+    min_d, max_d = int(6.2 * SC), int(16.8 * SC)
+    for c in cnts:
+        bx, by, bw_c, bh_c = cv2.boundingRect(c)
+        if min_d <= bw_c <= max_d and min_d <= bh_c <= max_d:
+            aspect = bw_c / float(max(1, bh_c))
+            if 0.70 <= aspect <= 1.40:
+                area = cv2.contourArea(c)
+                if area > 0.34 * (bw_c * bh_c):
+                    circles += 1
+    return circles
+
+def find_divider(gray_img, W, H):
+    x_start, x_end = int(W * 0.36 * SC), int(W * 0.64 * SC)
+    y_start, y_end = int(H * 0.10 * SC), int(H * 0.90 * SC)
+    ink_full = get_ink_mask(gray_img).astype(np.uint8)
+    roi = cv2.dilate(ink_full[y_start:y_end, x_start:x_end], np.ones((1, 3), np.uint8), iterations=1)
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, int(32 * SC)))
+    v_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, v_kernel)
+    col_sum = v_lines.sum(axis=0)
+    if col_sum.max() > int(35 * SC):
+        return (x_start + int(np.argmax(col_sum))) / SC, True
+    ink_sum = roi.sum(axis=0)
+    row_cover = float((roi.sum(axis=1) > 0).mean())
+    if ink_sum.min() == 0 and row_cover >= 0.30:
+        zero = (ink_sum == 0).astype(np.int8)
+        best_len, best_start, run_start = 0, 0, None
+        for i, v in enumerate(list(zero) + [0]):
+            if v and run_start is None:
+                run_start = i
+            elif not v and run_start is not None:
+                if i - run_start > best_len:
+                    best_len, best_start = i - run_start, run_start
+                run_start = None
+        if best_len >= int(8 * SC):
+            return (x_start + best_start + best_len / 2.0) / SC, True
+    return W / 2.0, False
+
+def trace_slanted_divider(gray_img, W, H):
+    base_div, is_two_col = find_divider(gray_img, W, H)
+    if not is_two_col:
+        return base_div, False, 0.0, lambda _y: base_div
+
+    x_start, x_end = int(W * 0.35 * SC), int(W * 0.65 * SC)
+    blur = cv2.GaussianBlur(gray_img, (3, 3), 0)
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 12)
+    roi = thresh[:, x_start:x_end]
+
+    h_px = gray_img.shape[0]
+    pts_y, pts_x = [], []
+    for y0 in range(int(0.06 * h_px), int(0.92 * h_px), int(25 * SC)):
+        y1 = min(h_px, y0 + int(40 * SC))
+        col_proj = roi[y0:y1, :].mean(axis=0)
+        best_c = int(np.argmax(col_proj))
+        if col_proj[best_c] > 105:
+            pts_y.append((y0 + y1) * 0.5 / SC)
+            pts_x.append((x_start + best_c) / SC)
+
+    if len(pts_x) >= 3:
+        med_x = float(np.median(pts_x))
+        inliers = [i for i in range(len(pts_x)) if abs(pts_x[i] - med_x) < 20.0]
+        if len(inliers) >= 2:
+            ys = np.array([pts_y[i] for i in inliers])
+            xs = np.array([pts_x[i] for i in inliers])
+            slope, intercept = np.polyfit(ys, xs, 1)
+            slope = float(np.clip(slope, -0.04, 0.04))
+            return med_x, True, slope, lambda y: float(slope * float(y) + intercept)
+
+    return base_div, True, 0.0, lambda _y: base_div
+
+def detect_horizontal_barriers(gray_img, x0, x1):
+    x0_px, x1_px = max(0, int(x0 * SC)), min(gray_img.shape[1], int(x1 * SC))
+    if x1_px - x0_px < 40:
+        return []
+    roi = get_ink_mask(gray_img[:, x0_px:x1_px]).astype(np.uint8)
+    min_w = max(30, int((x1 - x0) * 0.55 * SC))
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (min_w, 1))
+    h_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, h_kernel)
+    thick_blobs = cv2.morphologyEx(roi, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 6)))
+    thin_lines = h_lines & (~thick_blobs)
+    y_coords = np.where(thin_lines.sum(axis=1) > (min_w * 0.85))[0] / SC
+    merged = []
+    for y in y_coords:
+        if not merged or y - merged[-1] > 6.0:
+            merged.append(float(y))
+    return merged
+
+def snap_cut_line(ink, xr, y_target, up_win=2.5, down_win=1.0):
+    h_px, w_px = ink.shape
+    x0, x1 = max(0, int(xr[0] * SC)), min(w_px, int((xr[1] - 8.0) * SC))
+    a = max(0, int((y_target - up_win) * SC))
+    b = min(h_px, int((y_target + down_win) * SC))
+    if b <= a or x1 <= x0:
+        return y_target
+    prof = ink[a:b, x0:x1].mean(axis=1)
+    best_row = int(np.argmin(prof))
+    return (a + best_row) / SC
+
+def trim_vertical_whitespace(ink, xr, top, bot, max_gap_pt=None):
+    if max_gap_pt is None:
+        max_gap_pt = float(MAX_BLANK_GAP_PT)
+
+    h_px, w_px = ink.shape
+    x0 = max(0, int((xr[0] + 5.0) * SC))
+    x1 = min(w_px, int((xr[1] - 9.0) * SC))
+    y0, y1 = max(0, int(top * SC)), min(h_px, int(bot * SC))
+    if y1 <= y0 or x1 <= x0:
+        return top, bot
+
+    roi = ink[y0:y1, x0:x1].astype(np.uint8)
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(14, int(18 * SC))))
+    v_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, v_kernel)
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, int((x1 - x0) * 0.48)), 1))
+    h_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, h_kernel)
+    clean_roi = roi & (~v_lines) & (~h_lines)
+
+    row_ink = clean_roi.mean(axis=1) > 0.003
+    nz = np.where(row_ink)[0]
+    if len(nz) == 0:
+        return top, bot
+
+    first_row = nz[0]
+    last_row = nz[0]
+    max_gap_px = int(float(max_gap_pt) * SC)
+    min_q_px = int(10.0 * SC)
+
+    for r_idx in nz[1:]:
+        if (r_idx - last_row) > max_gap_px and (last_row - first_row) >= min_q_px:
+            break
+        last_row = r_idx
+
+    return max(top, (y0 + first_row) / SC - 3.5), min(bot, (y0 + last_row) / SC + 5.0)
+
+# ==============================================================================
+# ৭. ট্রু টু-স্টেপ হাইব্রিড ইঞ্জিন: ভিজ্যুয়াল লেআউট পার্সার + ওসিআর ট্যাগ ফিউশন
+# ==============================================================================
+def group_words_into_lines(words):
     if not words:
+        return []
+    sorted_w = sorted(words, key=lambda w: ((w[1] + w[3]) * 0.5, w[0]))
+    lines = []
+    cur_line = [sorted_w[0]]
+    cur_cy = (sorted_w[0][1] + sorted_w[0][3]) * 0.5
+    for w in sorted_w[1:]:
+        w_cy = (w[1] + w[3]) * 0.5
+        if abs(w_cy - cur_cy) <= 6.4:
+            cur_line.append(w)
+            cur_cy = sum((x[1] + x[3]) * 0.5 for x in cur_line) / len(cur_line)
+        else:
+            cur_line.sort(key=lambda x: x[0])
+            lines.append(cur_line)
+            cur_line = [w]
+            cur_cy = w_cy
+    cur_line.sort(key=lambda x: x[0])
+    lines.append(cur_line)
+    return lines
+
+def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn=None):
+    pdf_words = []
+    for wx0, wy0, wx1, wy1, text, *_ in page.get_text("words"):
+        if x0 - 4 <= wx0 < x1 - 4 and 12 < wy0 < H - 18:
+            pdf_words.append((wx0, wy0, wx1, wy1, text.strip()))
+
+    pdf_lines = group_words_into_lines(pdf_words)
+    sol_in_pdf = sum(1 for l in pdf_lines if line_has_solution_marker(l, " ".join(w[4] for w in l), x0 + MAX_SOL_X_OFFSET)[0])
+    q_in_pdf = sum(1 for w in pdf_words if NUM_RE.match(w[4]) or PURE_PREFIX_RE.match(w[4]))
+
+    ocr_words = []
+    ocr_thin_words = []
+    ocr_eng_words = []
+
+    if q_in_pdf < 3 or sol_in_pdf < max(1, q_in_pdf):
+        x0_px, x1_px = max(0, int(x0 * SC)), min(gray_img.shape[1], int(x1 * SC))
+        roi_gray = normalize_shadow_gray(gray_img[:, x0_px:x1_px].copy())
+
+        if is_two_col and div_fn is not None:
+            for r_px in range(roi_gray.shape[0]):
+                d_px = int(div_fn(r_px / SC) * SC) - x0_px
+                if col_i == 1 and 0 <= d_px + 4 < roi_gray.shape[1]:
+                    roi_gray[r_px, :max(0, d_px + 4)] = 255
+                elif col_i == 0 and 0 <= d_px - 4 < roi_gray.shape[1]:
+                    roi_gray[r_px, max(0, d_px - 4):] = 255
+
+        if (not is_two_col or col_i == 1) and roi_gray.shape[1] > int(25 * SC):
+            roi_gray[:, -int(12 * SC):] = 255
+
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(roi_gray)
+        clean_bw = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 14)
+        base_x = x0_px / SC
+
         try:
-            sc = 2.5
-            pix = page.get_pixmap(matrix=fitz.Matrix(sc, sc), clip=clip_rect, colorspace=fitz.csGRAY, alpha=False)
-            g = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width)
-            if g.mean() < 110:
-                g = 255 - g
-            bw = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 13)
-            data = pytesseract.image_to_data(bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT)
-            for i in range(len(data["text"])):
-                t = data["text"][i].strip()
-                conf = int(data["conf"][i]) if str(data["conf"][i]).lstrip("-").isdigit() else -1
-                if t and conf >= 15:
-                    wx0 = clip_rect.x0 + data["left"][i] / sc
-                    wy0 = clip_rect.y0 + data["top"][i] / sc
-                    wx1 = wx0 + data["width"][i] / sc
-                    wy1 = wy0 + data["height"][i] / sc
-                    words.append((wx0, wy0, wx1, wy1, t))
+            ocr_data = pytesseract.image_to_data(
+                clean_bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(ocr_data["text"])):
+                txt = ocr_data["text"][i].strip()
+                conf = int(ocr_data["conf"][i]) if str(ocr_data["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 14:
+                    continue
+                wx0 = base_x + ocr_data["left"][i] / SC
+                wy0 = ocr_data["top"][i] / SC
+                wx1 = wx0 + ocr_data["width"][i] / SC
+                wy1 = wy0 + ocr_data["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_words.append((wx0, wy0, wx1, wy1, txt))
         except Exception:
             pass
 
-    if not words:
-        return []
+        try:
+            thin_bw = cv2.dilate(clean_bw, np.ones((2, 2), np.uint8), iterations=1)
+            ocr_data2 = pytesseract.image_to_data(
+                thin_bw, lang="ben+eng", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(ocr_data2["text"])):
+                txt = ocr_data2["text"][i].strip()
+                conf = int(ocr_data2["conf"][i]) if str(ocr_data2["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 14:
+                    continue
+                wx0 = base_x + ocr_data2["left"][i] / SC
+                wy0 = ocr_data2["top"][i] / SC
+                wx1 = wx0 + ocr_data2["width"][i] / SC
+                wy1 = wy0 + ocr_data2["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_thin_words.append((wx0, wy0, wx1, wy1, txt))
+        except Exception:
+            pass
 
-    sorted_w = sorted(words, key=lambda w: ((w[1] + w[3]) * 0.5, w[0]))
-    lines = []
-    cur = [sorted_w[0]]
-    cur_cy = (sorted_w[0][1] + sorted_w[0][3]) * 0.5
-    for w in sorted_w[1:]:
-        cy = (w[1] + w[3]) * 0.5
-        if abs(cy - cur_cy) <= 6.5:
-            cur.append(w)
-            cur_cy = sum((x[1] + x[3]) * 0.5 for x in cur) / len(cur)
-        else:
-            cur.sort(key=lambda x: x[0])
-            lines.append(" ".join(x[4] for x in cur))
-            cur = [w]
-            cur_cy = cy
-    cur.sort(key=lambda x: x[0])
-    lines.append(" ".join(x[4] for x in cur))
-    return [ln.strip() for ln in lines if ln.strip()]
+        try:
+            left_strip_w = min(clean_bw.shape[1], int(85 * SC))
+            eng_data = pytesseract.image_to_data(
+                clean_bw[:, :left_strip_w], lang="eng", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(eng_data["text"])):
+                txt = eng_data["text"][i].strip()
+                conf = int(eng_data["conf"][i]) if str(eng_data["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 12:
+                    continue
+                wx0 = base_x + eng_data["left"][i] / SC
+                wy0 = eng_data["top"][i] / SC
+                wx1 = wx0 + eng_data["width"][i] / SC
+                wy1 = wy0 + eng_data["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_eng_words.append((wx0, wy0, wx1, wy1, txt))
+        except Exception:
+            pass
 
-
-def _rect_iou(r1, r2):
-    inter = r1 & r2
-    if inter.is_empty:
-        return 0.0
-    union = r1.get_area() + r2.get_area() - inter.get_area()
-    return inter.get_area() / max(1.0, union)
-
-
-def _sort_page_rects_for_numbering(rects, W, H):
-    if W > 1.2 * H:
-        rects_sorted = sorted(rects, key=lambda r: (r.y0, r.x0))
-        rows, out = [], []
-        for r in rects_sorted:
-            if rows and abs(r.y0 - rows[-1][0].y0) < 28:
-                rows[-1].append(r)
-            else:
-                rows.append([r])
-        for row in rows:
-            out.extend(sorted(row, key=lambda r: r.x0))
-        return out
-    return sorted(
-        rects,
-        key=lambda q: (0 if (q.width > 0.6 * W or (q.x0 + q.x1) / 2.0 < W / 2.0) else 1, q.y0)
+    return (
+        pdf_lines,
+        group_words_into_lines(ocr_words),
+        group_words_into_lines(ocr_thin_words),
+        group_words_into_lines(ocr_eng_words),
     )
 
+def build_hybrid_visual_rows(gray_img, ink, scan_x0, scan_x1, H, col_i, is_two_col, div_fn, pdf_lines, ocr_lines, ocr_thin_lines, ocr_eng_lines):
+    """
+    স্টেজ ১ (Layout Parser):
+    ওপেনসিভি মরফোলজি ও কন্টুর ব্যবহার করে পাতার প্রতিটি লাইনের নিখুঁত জ্যামিতিক বক্স (Visual Row)
+    এবং পাশাপাশি থাকা অপশন ব্লক (`sub_boxes`) তৈরি করে, তারপর তার ভেতরে ওসিআর ও পিডিএফের শব্দ বসায়।
+    """
+    x0_px, x1_px = max(0, int(scan_x0 * SC)), min(ink.shape[1], int(scan_x1 * SC))
+    roi_ink = ink[:, x0_px:x1_px].astype(np.uint8).copy()
 
-def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
-    suggestions = []
-    if old_rows_df is None or new_rows_df is None:
-        return suggestions
+    # কলাম ডিভাইডার ও কলামের প্রান্তের দাগ পরিষ্কার করা
+    if is_two_col and div_fn is not None:
+        for r_px in range(roi_ink.shape[0]):
+            d_px = int(div_fn(r_px / SC) * SC) - x0_px
+            if col_i == 1 and 0 <= d_px + 4 < roi_ink.shape[1]:
+                roi_ink[r_px, :max(0, d_px + 4)] = 0
+            elif col_i == 0 and 0 <= d_px - 4 < roi_ink.shape[1]:
+                roi_ink[r_px, max(0, d_px - 4):] = 0
 
-    kb = load_knowledge_base()
-    existing_q = {_normalize_tag_key(t) for t in kb.get("question_tags", [])}
-    existing_s = {_normalize_tag_key(t) for t in kb.get("solution_tags", [])}
-    existing_noise = {_normalize_tag_key(t) for t in kb.get("header_noise_patterns", [])}
+    # খাড়া ও অনুভূমিক বর্ডার লাইন বাদ দেওয়া যেন শুধু লেখার ব্লক থাকে
+    v_lines = cv2.morphologyEx(roi_ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, int(25 * SC))))
+    h_lines = cv2.morphologyEx(roi_ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (int(80 * SC), 1)))
+    clean_ink = roi_ink & (~v_lines) & (~h_lines)
 
+    # পাশাপাশি থাকা শব্দগুলোকে জুড়ে টেক্সট সেগমেন্ট (যেমন ১টি অপশন ব্লক বা ১টি লাইন) বানানো
+    kw = max(3, int(9.5 * SC))
+    kh = max(1, int(1.6 * SC))
+    dilated = cv2.dilate(clean_ink, cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh)), iterations=1)
+    cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    base_x = x0_px / SC
+    seg_boxes = []
+    for c in cnts:
+        bx, by, bw_c, bh_c = cv2.boundingRect(c)
+        w_pt, h_pt = bw_c / SC, bh_c / SC
+        y0_pt, y1_pt = by / SC, (by + bh_c) / SC
+        x0_pt, x1_pt = base_x + bx / SC, base_x + (bx + bw_c) / SC
+        if w_pt < 3.5 or h_pt < 3.5 or y0_pt < 28.0 or y1_pt > (H - 22.0):
+            continue
+        # যদি কোনো ব্লক একা ৩৫ পয়েন্টের বেশি লম্বা হয় (একাধিক লাইন একসাথে জুড়ে গেলে), তা অনুভূমিক প্রজেকশনে ভাগ করা
+        if h_pt > 24.0:
+            sub_roi = clean_ink[by:by + bh_c, bx:bx + bw_c]
+            row_proj = sub_roi.mean(axis=1) > 0.005
+            in_band = False
+            b_start = 0
+            for r_i, val in enumerate(list(row_proj) + [False]):
+                if val and not in_band:
+                    in_band = True
+                    b_start = r_i
+                elif not val and in_band:
+                    in_band = False
+                    if (r_i - b_start) / SC >= 3.5:
+                        band_slice = sub_roi[b_start:r_i, :]
+                        cols_nz = np.where(band_slice.any(axis=0))[0]
+                        if len(cols_nz) > 0:
+                            sx0 = base_x + (bx + cols_nz[0]) / SC
+                            sx1 = base_x + (bx + cols_nz[-1] + 1) / SC
+                            sy0 = (by + b_start) / SC
+                            sy1 = (by + r_i) / SC
+                            seg_boxes.append({"x0": sx0, "y0": sy0, "x1": sx1, "y1": sy1})
+        else:
+            seg_boxes.append({"x0": x0_pt, "y0": y0_pt, "x1": x1_pt, "y1": y1_pt})
+
+    # কাছাকাছি Y-অবস্থানের সেগমেন্টগুলোকে একই ভিজ্যুয়াল রো-তে (Row) সাজানো
+    seg_boxes.sort(key=lambda b: ((b["y0"] + b["y1"]) * 0.5, b["x0"]))
+    rows = []
+    for b in seg_boxes:
+        cy = (b["y0"] + b["y1"]) * 0.5
+        if rows and abs(cy - rows[-1]["cy"]) <= 6.8:
+            rows[-1]["sub_boxes"].append(b)
+            sbs = rows[-1]["sub_boxes"]
+            rows[-1]["cy"] = sum((x["y0"] + x["y1"]) * 0.5 for x in sbs) / len(sbs)
+            rows[-1]["x0"] = min(x["x0"] for x in sbs)
+            rows[-1]["x1"] = max(x["x1"] for x in sbs)
+            rows[-1]["y0"] = min(x["y0"] for x in sbs)
+            rows[-1]["y1"] = max(x["y1"] for x in sbs)
+        else:
+            rows.append({
+                "cy": cy, "x0": b["x0"], "x1": b["x1"],
+                "y0": b["y0"], "y1": b["y1"], "sub_boxes": [b],
+                "words": [], "eng_words": []
+            })
+
+    # যদি পিডিএফে ভিজ্যুয়াল কন্টুর না পাওয়া যায় তবে ওসিআর লাইন থেকে রো তৈরি
+    primary_lines = ocr_lines if len(ocr_lines) >= len(pdf_lines) else pdf_lines
+    if len(ocr_thin_lines) > len(primary_lines):
+        primary_lines = ocr_thin_lines
+
+    if not rows and primary_lines:
+        for ln in primary_lines:
+            lx0, ly0 = min(w[0] for w in ln), min(w[1] for w in ln)
+            lx1, ly1 = max(w[2] for w in ln), max(w[3] for w in ln)
+            rows.append({
+                "cy": (ly0 + ly1) * 0.5, "x0": lx0, "x1": lx1,
+                "y0": ly0, "y1": ly1,
+                "sub_boxes": [{"x0": w[0], "y0": w[1], "x1": w[2], "y1": w[3]} for w in ln],
+                "words": list(ln), "eng_words": []
+            })
+
+    # ওসিআর ও পিডিএফের শব্দগুলোকে সংশ্লিষ্ট ভিজ্যুয়াল রো-এর ভেতরে বসানো
+    all_main_words = [w for ln in primary_lines for w in ln]
+    for w in all_main_words:
+        w_cy = (w[1] + w[3]) * 0.5
+        best_r = None
+        best_d = 9.5
+        for r in rows:
+            d = abs(w_cy - r["cy"])
+            if d < best_d:
+                best_d = d
+                best_r = r
+        if best_r is not None:
+            best_r["words"].append(w)
+            best_r["x0"] = min(best_r["x0"], w[0])
+            best_r["x1"] = max(best_r["x1"], w[2])
+
+    all_eng_words = [w for ln in ocr_eng_lines for w in ln]
+    for ew in all_eng_words:
+        ew_cy = (ew[1] + ew[3]) * 0.5
+        best_r = None
+        best_d = 9.5
+        for r in rows:
+            d = abs(ew_cy - r["cy"])
+            if d < best_d:
+                best_d = d
+                best_r = r
+        if best_r is not None:
+            best_r["eng_words"].append(ew)
+
+    for r in rows:
+        r["sub_boxes"].sort(key=lambda x: x["x0"])
+        r["words"].sort(key=lambda w: w[0])
+        r["eng_words"].sort(key=lambda w: w[0])
+        r["text"] = " ".join(w[4] for w in r["words"]).strip()
+        r["eng_text"] = " ".join(w[4] for w in r["eng_words"]).strip()
+        r["circles"] = count_option_circles(gray_img, r["x0"] - 4.0, r["y0"] - 2.0, r["x1"] + 4.0, r["y1"] + 2.0)
+
+    return rows
+
+def _row_starts_with_question_number(r, col_left):
+    """
+    বাম মার্জিন ঘেঁষে প্রশ্ন নম্বর (যেমন 4., 11., 14., Q1) আছে কি না তা যাচাই করে।
+    ব্যাখ্যার শেষ লাইন বা মাঝখানের লেখাকে কখনোই প্রশ্ন হতে দেয় না।
+    """
+    # ১. ভিজ্যুয়াল রো নিজেই বাম মার্জিনের কাছে শুরু হতে হবে (২৬ পয়েন্টের মধ্যে)
+    if r["x0"] > col_left + 26.0:
+        return False, None
+
+    # ২. রো-এর প্রশস্ততা যথেষ্ট হতে হবে অথবা পাশাপাশি একাধিক সাব-বক্স থাকতে হবে
+    if (r["x1"] - r["x0"]) < 42.0 and len(r["sub_boxes"]) < 2:
+        return False, None
+
+    # ৩. প্রথমে বাম স্ট্রিপের ইংরেজি ওসিআর এবং মূল ওসিআরের প্রথম টোকেনগুলো পরীক্ষা করা
+    candidates = []
+    for ew in r["eng_words"][:2]:
+        if ew[0] <= col_left + 30.0:
+            candidates.append(ew[4])
+    for mw in r["words"][:2]:
+        if mw[0] <= col_left + 30.0:
+            candidates.append(mw[4])
+
+    for tok in candidates:
+        t_clean = tok.strip("([{|! ")
+        if not t_clean:
+            continue
+        # দশমিক সংখ্যা (যেমন 2.5 বা 10.0) বাদ দেওয়া
+        if re.match(r"^[0-9০-৯]+\.[0-9০-৯]+$", t_clean):
+            continue
+        if OPT_TOKEN_RE.match(tok.strip()):
+            continue
+
+        m = NUM_RE.match(t_clean)
+        if m:
+            qn = _b2e_int(m.group(1))
+            if qn is not None and 1 <= qn <= MAX_Q_NUMBER:
+                return True, qn
+        elif PURE_PREFIX_RE.match(t_clean):
+            return True, None
+        elif re.match(r"^[0-9০-৯]{1,2}$", t_clean) and len(r["sub_boxes"]) >= 2:
+            # ডট ছাড়া সংখ্যা হলে প্রথম সাব-বক্সটি ছোট একটি নম্বর ব্লক হতে হবে
+            first_sb_w = r["sub_boxes"][0]["x1"] - r["sub_boxes"][0]["x0"]
+            if first_sb_w <= 24.0 and ("?" in r["text"] or DOTLESS_KW_RE.search(r["text"])):
+                qn = _b2e_int(t_clean)
+                if qn is not None and 1 <= qn <= MAX_Q_NUMBER:
+                    return True, qn
+
+    return False, None
+
+def extract_column_questions_hybrid(gray_img, ink, rows, col_left, col_right, H, xray_log=None, page_no=1, col_no=1):
+    """
+    স্টেজ ২ (Hybrid Layout + KB Tag Engine):
+    ভিজ্যুয়াল রো, অপশন গ্রিড এবং নলেজ-বেস ট্যাগ (`solution_tags`, `header_noise_patterns`, `bullet_stop_chars`)
+    একসাথে মিলিয়ে প্রতিটি প্রশ্নের নিখুঁত `(top_y, bot_y)` বের করে।
+    """
+    if not rows:
+        return []
+
+    col_w = max(100.0, col_right - col_left)
+
+    # ১. জলছাপ ও হেডার নয়েজ বাদ দেওয়া
+    valid_rows = []
+    for r in rows:
+        comb_txt = f"{r['text']} {r['eng_text']}".strip()
+        if comb_txt and HEADER_NOISE_RE.search(comb_txt):
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1), "সিদ্ধান্ত": "বাতিল (হেডার নয়েজ)", "লাইন": comb_txt[:70]})
+            continue
+        valid_rows.append(r)
+
+    if not valid_rows:
+        return []
+
+    # ২. বাম মার্জিনে শুরু হওয়া আসল প্রশ্নগুলোর ইনডেক্স শনাক্ত করা
+    q_start_indices = []
+    for idx, r in enumerate(valid_rows):
+        # যদি লাইনটি নিজেই সমাধান ট্যাগ বা সমীকরণ হয় তবে তা প্রশ্ন হতে পারে না
+        has_sol, _ = line_has_solution_marker(r["words"], r["text"], col_left + MAX_SOL_X_OFFSET)
+        if has_sol:
+            continue
+        if ("=" in r["text"] or "⇒" in r["text"] or "∴" in r["text"]) and "?" not in r["text"] and not EQ_GUARD_KW_RE.search(r["text"]):
+            continue
+
+        is_q, qn = _row_starts_with_question_number(r, col_left)
+        if is_q:
+            if not q_start_indices or (r["y0"] - valid_rows[q_start_indices[-1]]["y0"]) >= MIN_START_GAP_PT:
+                q_start_indices.append(idx)
+                if xray_log is not None:
+                    xray_log.append({
+                        "পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1),
+                        "সিদ্ধান্ত": f"শুরু (প্রশ্ন #{qn if qn else '?'})",
+                        "লাইন": (r["text"] or r["eng_text"])[:70]
+                    })
+
+    # ৩. প্রতিটি প্রশ্নের শুরু থেকে অপশন গ্রিডের শেষ পর্যন্ত বক্স নির্ধারণ (উত্তর/ব্যাখ্যা বাদ দিয়ে)
+    q_bounds = []
+    for qi, start_idx in enumerate(q_start_indices):
+        end_limit_idx = q_start_indices[qi + 1] if (qi + 1) < len(q_start_indices) else len(valid_rows)
+        start_row = valid_rows[start_idx]
+        q_top = start_row["y0"] - 2.0
+        q_bot = start_row["y1"] + 2.0
+
+        seen_options = False
+        total_opt_circles = 0
+        opt_rows_count = 0
+        collected_rows = [start_row]
+
+        for r_idx in range(start_idx + 1, end_limit_idx):
+            r = valid_rows[r_idx]
+            txt = r["text"]
+
+            # ক) নলেজ-বেসের বুলেট স্টপ চেক
+            if txt and (BULLET_STOP_RE.match(txt) or (r["words"] and BULLET_STOP_RE.match(r["words"][0][4]))):
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1), "সিদ্ধান্ত": "থামো (বুলেট চিহ্ন)", "লাইন": txt[:70]})
+                break
+
+            # খ) নলেজ-বেসের সমাধান ট্যাগ ('উত্তর:', 'ব্যাখ্যা:', 'Soln' ইত্যাদি) চেক
+            has_sol, _ = line_has_solution_marker(r["words"], txt, col_left + MAX_SOL_X_OFFSET)
+            if has_sol:
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1), "সিদ্ধান্ত": "থামো (সমাধান ট্যাগ)", "লাইন": txt[:70]})
+                break
+
+            # গ) সমীকরণ লাইন ('=', '⇒', '∴') চেক
+            if txt and ("=" in txt or "⇒" in txt or "∴" in txt) and "?" not in txt:
+                if not EQ_GUARD_KW_RE.search(txt) and r["circles"] < 2:
+                    if xray_log is not None:
+                        xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1), "সিদ্ধান্ত": "থামো (সমীকরণ লাইন)", "লাইন": txt[:70]})
+                    break
+
+            # ঘ) জ্যামিতিক অপশন গ্রিড বিশ্লেষণ (Layout Parser)
+            # বোর্ড ট্যাগ ([DU-A 22-23]) বাদে পাশাপাশি একাধিক অপশন ব্লক আছে কি না
+            sbs = r["sub_boxes"]
+            has_split_opt_boxes = False
+            if len(sbs) >= 2:
+                # যদি শেষ সাব-বক্সটি একদম ডান প্রান্তে বোর্ড ট্যাগ হয়, তবে বাকিগুলো দেখা
+                if BOARD_TAG_RE.search(txt) or BOARD_TAG_RE.search(r["eng_text"]):
+                    core_sbs = [sb for sb in sbs if sb["x0"] < col_left + col_w * 0.68]
+                else:
+                    core_sbs = sbs
+                if len(core_sbs) >= 2 and any(sb["x0"] >= col_left + col_w * 0.25 for sb in core_sbs[1:]):
+                    has_split_opt_boxes = True
+
+            is_indented = (r["x0"] > col_left + 7.0) and (r["x0"] < col_left + col_w * 0.45)
+            returns_to_left = (r["x0"] <= col_left + 7.0)
+            circle_cnt = r["circles"]
+            has_opt_sym = bool(r["words"] and OPT_TOKEN_RE.match(r["words"][0][4])) or any(c in txt for c in ("ⓐ", "ⓑ", "ⓒ", "ⓓ", "①", "②", "③", "④"))
+
+            is_opt_row = (
+                (circle_cnt >= 2)
+                or has_split_opt_boxes
+                or (is_indented and (circle_cnt >= 1 or has_opt_sym or len(sbs) >= 2))
+            )
+
+            if not seen_options:
+                if is_opt_row:
+                    seen_options = True
+                    opt_rows_count = 1
+                    total_opt_circles += max(2, circle_cnt)
+                    q_bot = r["y1"] + 2.0
+                    collected_rows.append(r)
+                elif (r["y0"] - q_bot) <= 15.5 and (r_idx - start_idx) <= 3:
+                    # প্রশ্নের ২য় বা ৩য় লাইন কিংবা ডানপাশের বোর্ড ট্যাগ লাইন
+                    q_bot = r["y1"] + 2.0
+                    collected_rows.append(r)
+                else:
+                    break
+            else:
+                # অপশন শুরু হওয়ার পর:
+                # যদি নতুন লাইন বাম মার্জিনে ফেরে এবং তাতে গোল বৃত্ত <= ১টি থাকে (যেমন 'উত্তর: ঘ ক্লোরোপ্লাস্ট' বা 'ব্যাখ্যা:...'), সাথে সাথে থামো!
+                if returns_to_left and (
+                    total_opt_circles >= 4
+                    or opt_rows_count >= 2
+                    or (circle_cnt <= 1 and not has_split_opt_boxes)
+                ):
+                    if xray_log is not None:
+                        xray_log.append({
+                            "পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(r["y0"], 1),
+                            "সিদ্ধান্ত": "থামো (লেআউট পার্সার: অপশন শেষে উত্তর/ব্যাখ্যা)",
+                            "লাইন": (txt or r["eng_text"])[:70]
+                        })
+                    break
+                elif is_opt_row and (r["y0"] - q_bot) <= 18.0:
+                    opt_rows_count += 1
+                    total_opt_circles += max(2, circle_cnt)
+                    q_bot = r["y1"] + 2.0
+                    collected_rows.append(r)
+                else:
+                    break
+
+        # ৪. প্যারাগ্রাফ গার্ড: বক্সটিতে যদি অপশন বৃত্ত থাকে, অথবা প্রশ্নবোধক চিহ্ন/কীওয়ার্ড থাকে, তবেই তা বৈধ প্রশ্ন
+        full_q_text = " ".join(x["text"] for x in collected_rows).strip()
+        total_circles_in_q = sum(x["circles"] for x in collected_rows)
+        has_q_mark = "?" in full_q_text or "?" in " ".join(x["eng_text"] for x in collected_rows)
+        has_kw = bool(VALID_CROP_KW_RE.search(full_q_text))
+
+        if seen_options or total_circles_in_q >= 2 or has_q_mark or has_kw or len(collected_rows) >= 2:
+            q_bounds.append((q_top, q_bot))
+        elif xray_log is not None:
+            xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(q_top, 1), "সিদ্ধান্ত": "বাতিল (সাধারণ প্যারাগ্রাফ/নয়েজ)", "লাইন": full_q_text[:70]})
+
+    return q_bounds
+
+# ==============================================================================
+# ৮. স্লাইড মোড: বক্সে ঘেরা প্রশ্ন শনাক্ত, Sol^n ও ফাঁকা জায়গা ছাঁটাই
+# ==============================================================================
+def is_slide_page(W, H):
+    if PAGE_MODE == "বই":
+        return False
+    if PAGE_MODE == "স্লাইড":
+        return True
+    return W > 1.2 * H
+
+def _order_rects_reading(rects):
+    rects = sorted(rects, key=lambda r: (r.y0, r.x0))
+    rows, out = [], []
+    for r in rects:
+        if rows and abs(r.y0 - rows[-1][0].y0) < 30:
+            rows[-1].append(r)
+        else:
+            rows.append([r])
+    for row in rows:
+        out.extend(sorted(row, key=lambda r: r.x0))
+    return out
+
+def box_has_question_number(page, gray, rect):
+    try:
+        words = [w for w in page.get_text("words")
+                 if rect.x0 - 2 <= w[0] <= rect.x1 and rect.y0 - 2 <= w[1] <= rect.y1 and w[4].strip()]
+        if words:
+            top_y = min(w[1] for w in words)
+            first_line = sorted([w for w in words if w[1] <= top_y + 12], key=lambda w: w[0])
+            return any(NUM_RE.match(w[4].strip()) or PURE_PREFIX_RE.match(w[4].strip()) for w in first_line[:2])
+        x0, y0 = max(0, int(rect.x0 * SC)), max(0, int(rect.y0 * SC))
+        x1, y1 = int(rect.x1 * SC), int(min(rect.y1, rect.y0 + 45) * SC)
+        txt = pytesseract.image_to_string(gray[y0:y1, x0:x1], lang="eng", config="--psm 7").strip()
+        return bool(re.match(r"^\W{0,3}[\(\[]?\s*[0-9]{1,3}\s*[\)\]\.]", txt))
+    except Exception:
+        return False
+
+def trim_solution_inside_slide_box(page, gray, ink, rect):
+    cur_rect = rect
+    try:
+        x0_px, y0_px = max(0, int(rect.x0 * SC)), max(0, int(rect.y0 * SC))
+        x1_px, y1_px = min(gray.shape[1], int(rect.x1 * SC)), min(gray.shape[0], int(rect.y1 * SC))
+        if y1_px - y0_px < 40 or x1_px - x0_px < 60:
+            return rect
+        roi = gray[y0_px:y1_px, x0_px:x1_px]
+        bw = cv2.adaptiveThreshold(roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 13)
+        data = pytesseract.image_to_data(bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT)
+        words = []
+        for i in range(len(data["text"])):
+            t = data["text"][i].strip()
+            if not t:
+                continue
+            wx0 = rect.x0 + data["left"][i] / SC
+            wy0 = rect.y0 + data["top"][i] / SC
+            wx1 = wx0 + data["width"][i] / SC
+            wy1 = wy0 + data["height"][i] / SC
+            words.append((wx0, wy0, wx1, wy1, t))
+        lines = group_words_into_lines(words)
+        for ln in lines:
+            joined = " ".join(w[4] for w in ln)
+            has_s, sy = line_has_solution_marker(ln, joined, rect.x0 + (rect.width * 0.55))
+            if has_s and sy is not None and (sy - rect.y0) >= 18.0:
+                new_bot = snap_cut_line(ink, (rect.x0 + 4, rect.x1 - 4), sy - 1.5, up_win=2.5, down_win=0.5)
+                cur_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, max(rect.y0 + 18.0, new_bot))
+                break
+    except Exception:
+        pass
+
+    try:
+        _, trimmed_bot = trim_vertical_whitespace(
+            ink,
+            (cur_rect.x0 + 6.0, cur_rect.x1 - 6.0),
+            cur_rect.y0 + 4.0,
+            cur_rect.y1 - 4.0,
+            MAX_BLANK_GAP_PT
+        )
+        if trimmed_bot + 4.0 < cur_rect.y1 and (trimmed_bot - cur_rect.y0) >= 18.0:
+            cur_rect = fitz.Rect(cur_rect.x0, cur_rect.y0, cur_rect.x1, trimmed_bot + 2.0)
+    except Exception:
+        pass
+    return cur_rect
+
+def detect_boxed_questions(page, gray, ink, W, H):
+    k = int(110 * SC)
+    m = ink.astype(np.uint8)
+    h_lines = cv2.morphologyEx(m, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1)))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(h_lines, connectivity=8)
+    segs = []
+    for i in range(1, n):
+        x, y, w, h, _a = stats[i]
+        if w >= k and h <= int(9 * SC):
+            segs.append((x / SC, (y + h / 2.0) / SC, (x + w) / SC))
+    segs.sort(key=lambda t: t[1])
+
+    def side_cover(xc_lo, xc_hi, yt, yb):
+        a, b = max(0, int(xc_lo * SC)), min(ink.shape[1], int(xc_hi * SC))
+        r0, r1 = int((yt + 8) * SC), int((yb - 8) * SC)
+        if b <= a or r1 <= r0:
+            return 0.0, None
+        win = ink[r0:r1, a:b]
+        rows_hit = win.any(axis=1).mean()
+        col = win.sum(axis=0)
+        return float(rows_hit), (a + int(np.argmax(col))) / SC
+
+    boxes = []
+    used_bottom = set()
+    for i, (ax0, ay, ax1) in enumerate(segs):
+        for j in range(i + 1, len(segs)):
+            bx0, by, bx1 = segs[j]
+            dy = by - ay
+            if dy < 24:
+                continue
+            if dy > 0.7 * H:
+                break
+            if abs(ax0 - bx0) > 14 or abs(ax1 - bx1) > 14:
+                continue
+            lcov, lx = side_cover(ax0 - 22, ax0 + 3, ay, by)
+            rcov, rx = side_cover(ax1 - 3, ax1 + 22, ay, by)
+            if lcov < 0.8 or rcov < 0.8 or j in used_bottom:
+                continue
+            rect = fitz.Rect(max(2.0, lx - 4), max(2.0, ay - 4), min(W - 2.0, rx + 4), min(H - 2.0, by + 4))
+            if any((rect & r).get_area() > 0.8 * min(rect.get_area(), r.get_area()) for r in [b[0] for b in boxes]):
+                break
+            if box_has_question_number(page, gray, rect):
+                trimmed_rect = trim_solution_inside_slide_box(page, gray, ink, rect)
+                boxes.append((trimmed_rect,))
+                used_bottom.add(j)
+            break
+    return _order_rects_reading([b[0] for b in boxes])
+
+# ৯. প্রোগ্রেস কার্ড ও মূল এক্সট্রাকশন পাইপলাইন
+def render_progress_card(placeholder, current_idx, total_pages, page_no, found_count, stage_label):
+    pct = int(round((current_idx / max(1, total_pages)) * 100))
+    placeholder.markdown(f"""
+    <div class="progress-studio-card">
+        <div class="ps-top-row">
+            <div class="ps-status-text">
+                <span class="ps-dot"></span>
+                <span>{stage_label}</span>
+            </div>
+            <span class="ps-counter">{current_idx:02d}/{total_pages:02d} • {pct}%</span>
+        </div>
+        <div class="ps-track">
+            <div class="ps-fill" style="width: {pct}%;"></div>
+        </div>
+        <div class="ps-sub-row">
+            <span>PAGE #{page_no}</span>
+            <span>FOUND: {found_count}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xray=False):
+    questions = []
+    xray_logs = []
+    total_to_scan = len(page_indices)
+
+    for idx, pno in enumerate(page_indices):
+        render_progress_card(
+            progress_slot, idx, total_to_scan, pno + 1, len(questions),
+            f"পৃষ্ঠা {pno + 1} স্ক্যান চলছে..."
+        )
+
+        page = src_doc[pno]
+        W, H = page.rect.width, page.rect.height
+        gray = page_to_gray(page, SC)
+        ink = get_ink_mask(gray)
+
+        if is_slide_page(W, H):
+            boxed = detect_boxed_questions(page, gray, ink, W, H)
+            if boxed:
+                for r in boxed:
+                    questions.append((pno, r))
+                render_progress_card(
+                    progress_slot, idx + 1, total_to_scan, pno + 1, len(questions),
+                    f"পৃষ্ঠা {pno + 1} সম্পন্ন"
+                )
+                continue
+
+        div_x, is_two_col, div_slope, div_fn = trace_slanted_divider(gray, W, H)
+
+        if is_two_col:
+            for r_px in range(ink.shape[0]):
+                xd_px = int(div_fn(r_px / SC) * SC)
+                ink[r_px, max(0, xd_px - int(3.5 * SC)):min(ink.shape[1], xd_px + int(3.5 * SC))] = False
+
+        col_ranges = [(12.0, div_x - 2.0), (div_x + 2.0, W - 12.0)] if is_two_col else [(12.0, W - 12.0)]
+
+        for col_i, (cx0, cx1) in enumerate(col_ranges):
+            scan_x0 = min(cx0, div_fn(20.0) + 1.5, div_fn(H - 20.0) + 1.5) if (is_two_col and col_i == 1) else cx0
+            scan_x1 = max(cx1, div_fn(20.0) - 1.5, div_fn(H - 20.0) - 1.5) if (is_two_col and col_i == 0) else cx1
+
+            pdf_lines, ocr_lines, ocr_thin_lines, ocr_eng_lines = get_column_lines(
+                page, gray, scan_x0, scan_x1, H, col_i=col_i, is_two_col=is_two_col, div_fn=div_fn
+            )
+
+            # স্টেজ ১: ভিজ্যুয়াল কন্টুর ও ওসিআর মিলিয়ে জ্যামিতিক রো তৈরি
+            visual_rows = build_hybrid_visual_rows(
+                gray, ink, scan_x0, scan_x1, H, col_i, is_two_col, div_fn,
+                pdf_lines, ocr_lines, ocr_thin_lines, ocr_eng_lines
+            )
+            if not visual_rows:
+                continue
+
+            # কলামের প্রকৃত বাম ও ডান মার্জিন নির্ণয় (যেমন test_hybrid.py-তে ১২তম পার্সেন্টাইল দিয়ে করা হয়েছিল)
+            wide_lefts = [r["x0"] for r in visual_rows if (r["x1"] - r["x0"]) > 28.0]
+            col_left = float(np.percentile(wide_lefts, 12)) if wide_lefts else (cx0 + 6.0)
+            col_right = max(r["x1"] for r in visual_rows)
+
+            log_target = xray_logs if collect_xray else None
+
+            # স্টেজ ২: হাইব্রিড লেআউট পার্সার + নলেজ-বেস ট্যাগ ইঞ্জিন দিয়ে প্রশ্নের সীমানা বের করা
+            q_bounds = extract_column_questions_hybrid(
+                gray, ink, visual_rows, col_left, col_right, H,
+                xray_log=log_target, page_no=pno + 1, col_no=col_i + 1
+            )
+
+            for st_y, end_y in q_bounds:
+                div_at_top = div_fn(st_y)
+                div_at_bot = div_fn(end_y)
+                if is_two_col and col_i == 0:
+                    q_x0 = max(8.0, cx0 - 2.0, min(col_left - 5.0, 22.0))
+                    q_x1 = min(div_at_top, div_at_bot) - 2.0 - RIGHT_EDGE_TRIM_PT
+                elif is_two_col and col_i == 1:
+                    q_x0 = max(div_at_top, div_at_bot) + 1.5
+                    q_x1 = min(W - 8.0, col_right + 5.0) - RIGHT_EDGE_TRIM_PT
+                else:
+                    q_x0 = max(8.0, cx0 - 2.0, col_left - 5.0)
+                    q_x1 = min(cx1, col_right + 5.0) - RIGHT_EDGE_TRIM_PT
+
+                if q_x1 - q_x0 < 75:
+                    continue
+
+                top = snap_cut_line(ink, (q_x0, q_x1), st_y, up_win=2.5, down_win=1.0)
+                bot = snap_cut_line(ink, (q_x0, q_x1), end_y, up_win=1.8, down_win=0.8)
+                top, bot = trim_vertical_whitespace(ink, (q_x0, q_x1), top, bot, MAX_BLANK_GAP_PT)
+
+                if bot - top >= float(MIN_Q_HEIGHT_PT) and q_x1 - q_x0 >= 75.0:
+                    box_ink = ink[int(top * SC):int(bot * SC), int(q_x0 * SC):int(q_x1 * SC)]
+                    if box_ink.size > 0 and box_ink.mean() > 0.004:
+                        rect = fitz.Rect(q_x0, top, q_x1, bot)
+                        if not rect.is_empty and not rect.is_infinite:
+                            questions.append((pno, rect))
+
+        render_progress_card(
+            progress_slot, idx + 1, total_to_scan, pno + 1, len(questions),
+            f"পৃষ্ঠা {pno + 1} সম্পন্ন"
+        )
+
+    st.session_state["rv_xray_logs"] = xray_logs
+    return questions
+
+def build_practice_pdf(src_doc, questions, custom_gaps=None):
+    if custom_gaps is None:
+        custom_gaps = st.session_state.get("rv_custom_gaps", {})
+
+    out = fitz.open()
+    PW, PH = fitz.paper_size("a4")
+    MARGIN_X, MARGIN_TOP, MARGIN_BOT, COL_GAP = 24.0, 50.0, 26.0, 18.0
+    num_cols = int(COLUMNS_PER_PAGE)
+    col_width = (PW - 2 * MARGIN_X - (num_cols - 1) * COL_GAP) / num_cols
+
+    widths = sorted(c.width for _, c in questions)
+    wide_set = widths[len(widths) // 2] > 1.5 * col_width
+    common_scale = None
+    if wide_set:
+        num_cols = 1
+        col_width = PW - 2 * MARGIN_X
+        common_scale = min(1.65, col_width / max(widths))
+
+    def create_styled_page():
+        p = out.new_page(width=PW, height=PH)
+        if HEADER_TITLE.strip():
+            p.insert_text(fitz.Point(MARGIN_X, 30), HEADER_TITLE.strip(), fontsize=11, fontname="helv", color=(0.1, 0.1, 0.1))
+            p.insert_text(fitz.Point(PW - MARGIN_X - 75, 30), f"Total Q: {len(questions)}", fontsize=10, fontname="helv", color=(0.2, 0.2, 0.2))
+            p.draw_line(fitz.Point(MARGIN_X, 37), fitz.Point(PW - MARGIN_X, 37), color=(0.2, 0.2, 0.2), width=0.8)
+        if num_cols == 2:
+            mid_x = PW / 2.0
+            p.draw_line(fitz.Point(mid_x, MARGIN_TOP - 6), fitz.Point(mid_x, PH - MARGIN_BOT), color=(0.3, 0.3, 0.3), width=0.6)
+        return p
+
+    page = create_styled_page()
+    cur_col, y_cursor = 0, MARGIN_TOP
+    avail_col_h = PH - MARGIN_TOP - MARGIN_BOT
+
+    for q_idx, (pno, clip) in enumerate(questions):
+        q_key = str(q_idx + 1)
+        gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, QUESTION_GAP_PT)))
+        extra_space = max(0.0, gap_pt - float(QUESTION_GAP_PT))
+
+        scale = common_scale if common_scale else min(col_width / clip.width, 1.35 if num_cols == 2 else 1.65)
+        target_w, target_h = clip.width * scale, clip.height * scale
+        needed_h = min(avail_col_h, target_h + extra_space)
+
+        if y_cursor + needed_h > PH - MARGIN_BOT and y_cursor > MARGIN_TOP:
+            cur_col += 1
+            if cur_col >= num_cols:
+                page = create_styled_page()
+                cur_col = 0
+            y_cursor = MARGIN_TOP
+
+        x_start = MARGIN_X + cur_col * (col_width + COL_GAP)
+        target_rect = fitz.Rect(x_start, y_cursor, x_start + target_w, y_cursor + target_h)
+        if INVERT_DARK_OUT and clip_is_dark(src_doc[pno], clip):
+            pix = src_doc[pno].get_pixmap(matrix=fitz.Matrix(3, 3), clip=clip, alpha=False)
+            pix.invert_irect(pix.irect)
+            page.insert_image(target_rect, pixmap=pix)
+        else:
+            page.show_pdf_page(target_rect, src_doc, pno, clip=clip)
+        y_cursor += target_h + gap_pt
+
+    pdf_bytes = out.tobytes(garbage=4, deflate=True)
+    out.close()
+    return pdf_bytes
+
+# ==============================================================================
+# ৯.৯ বাহ্যিক canvas_editor.html লোডার, বক্স সিঙ্ক ও পিন-সুরক্ষিত লার্নিং কার্ড
+# ==============================================================================
+def _order_items_reading(items):
+    items = sorted(items, key=lambda it: (it[0].y0, it[0].x0))
+    rows, out = [], []
+    for it in items:
+        if rows and abs(it[0].y0 - rows[-1][0][0].y0) < 30:
+            rows[-1].append(it)
+        else:
+            rows.append([it])
+    for row in rows:
+        out.extend(sorted(row, key=lambda it: it[0].x0))
+    return out
+
+def questions_to_rows(questions, w_flags=None):
+    rows = []
+    for idx, (pno, r) in enumerate(questions):
+        is_w = bool(w_flags[idx]) if (w_flags and idx < len(w_flags)) else False
+        rows.append({
+            "keep": True,
+            "page": pno + 1,
+            "x0": round(float(r.x0), 1),
+            "y0": round(float(r.y0), 1),
+            "x1": round(float(r.x1), 1),
+            "y1": round(float(r.y1), 1),
+            "w_gap": is_w,
+        })
+    return pd.DataFrame(rows, columns=["keep", "page", "x0", "y0", "x1", "y1", "w_gap"])
+
+def rows_to_questions(df, src_doc):
+    per_page = {}
+    for _, r in df.iterrows():
+        try:
+            if not bool(r.get("keep", True)):
+                continue
+            pno = int(r["page"]) - 1
+            if not (0 <= pno < len(src_doc)):
+                continue
+            W, H = src_doc[pno].rect.width, src_doc[pno].rect.height
+            y0, y1 = float(r["y0"]), float(r["y1"])
+            if pd.isna(y0) or pd.isna(y1):
+                continue
+            x0 = 14.0 if pd.isna(r["x0"]) else float(r["x0"])
+            x1 = W - 14.0 if pd.isna(r["x1"]) else float(r["x1"])
+            rect = fitz.Rect(max(0.0, min(x0, x1)), max(0.0, min(y0, y1)), min(W, max(x0, x1)), min(H, max(y0, y1)))
+            if rect.width < 18 or rect.height < 6:
+                continue
+            raw_w = r.get("w_gap", False)
+            is_w = False if pd.isna(raw_w) else bool(raw_w)
+            per_page.setdefault(pno, []).append((rect, is_w))
+        except Exception:
+            continue
+
+    out = []
+    custom_gaps = {}
+    w_gap_pt = float(st.session_state.get("rv_w_gap_pt", 90.0))
+    q_serial = 1
+
+    for pno in sorted(per_page):
+        W, H = src_doc[pno].rect.width, src_doc[pno].rect.height
+        items = per_page[pno]
+        if W > 1.2 * H:
+            items = _order_items_reading(items)
+        else:
+            items = sorted(
+                items,
+                key=lambda it: (0 if (it[0].width > 0.6 * W or (it[0].x0 + it[0].x1) / 2 < W / 2) else 1, it[0].y0)
+            )
+        for rect, is_w in items:
+            out.append((pno, rect))
+            if is_w:
+                custom_gaps[str(q_serial)] = w_gap_pt
+            q_serial += 1
+
+    st.session_state["rv_custom_gaps"] = custom_gaps
+    return out
+
+def apply_sidebar_batch_transform(df, raw_pdf, target_mode, box_nums_str, target_page, dx, dy, dw, dh):
+    if df is None or df.empty:
+        return df
     doc = fitz.open(stream=raw_pdf, filetype="pdf")
+    ordered_qs = rows_to_questions(df, doc)
+    custom_map = st.session_state.get("rv_custom_gaps", {})
+    w_flags = [str(i + 1) in custom_map for i in range(len(ordered_qs))]
+    ordered_df = questions_to_rows(ordered_qs, w_flags=w_flags)
+    total_q = len(ordered_df)
 
-    old_raw_by_page = {}
-    for _, r in old_rows_df.iterrows():
-        if bool(r.get("keep", True)):
-            p = int(r["page"]) - 1
-            old_raw_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
+    if target_mode == "নির্দিষ্ট বক্স":
+        target_indices = parse_box_selection_string(box_nums_str, total_q)
+    else:
+        target_indices = set(range(total_q))
 
-    new_raw_by_page = {}
-    for _, r in new_rows_df.iterrows():
-        if bool(r.get("keep", True)):
-            p = int(r["page"]) - 1
-            new_raw_by_page.setdefault(p, []).append(fitz.Rect(float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"])))
+    updated_rows = []
+    for idx, row in ordered_df.iterrows():
+        pno = int(row["page"]) - 1
+        W = doc[pno].rect.width if 0 <= pno < len(doc) else 595.0
+        H = doc[pno].rect.height if 0 <= pno < len(doc) else 842.0
+        x0, y0, x1, y1 = float(row["x0"]), float(row["y0"]), float(row["x1"]), float(row["y1"])
+        cx = (x0 + x1) * 0.5
 
-    all_pages = sorted(set(old_raw_by_page.keys()) | set(new_raw_by_page.keys()))
+        match = False
+        if target_mode == "সব বক্স":
+            match = True
+        elif target_mode == "নির্দিষ্ট বক্স" and idx in target_indices:
+            match = True
+        elif target_mode == "বাম কলাম" and cx < (W * 0.5):
+            match = True
+        elif target_mode == "ডান কলাম" and cx >= (W * 0.5):
+            match = True
+        elif target_mode == "নির্দিষ্ট পেজ" and int(row["page"]) == int(target_page):
+            match = True
 
-    old_by_page = {}
-    old_serial = 1
-    for pno in sorted(old_raw_by_page.keys()):
-        if 0 <= pno < len(doc):
-            W, H = doc[pno].rect.width, doc[pno].rect.height
-            sorted_olds = _sort_page_rects_for_numbering(old_raw_by_page[pno], W, H)
-            old_by_page[pno] = []
-            for r in sorted_olds:
-                old_by_page[pno].append((old_serial, r))
-                old_serial += 1
+        if match:
+            x0 = max(2.0, min(W - 24.0, x0 + float(dx)))
+            y0 = max(2.0, min(H - 18.0, y0 + float(dy)))
+            x1 = max(x0 + 20.0, min(W - 2.0, x1 + float(dx) + float(dw)))
+            y1 = max(y0 + 12.0, min(H - 2.0, y1 + float(dy) + float(dh)))
 
-    new_by_page = {}
-    new_serial = 1
-    for pno in sorted(new_raw_by_page.keys()):
-        if 0 <= pno < len(doc):
-            W, H = doc[pno].rect.width, doc[pno].rect.height
-            sorted_news = _sort_page_rects_for_numbering(new_raw_by_page[pno], W, H)
-            new_by_page[pno] = []
-            for r in sorted_news:
-                new_by_page[pno].append((new_serial, r))
-                new_serial += 1
+        updated_rows.append({
+            "keep": True,
+            "page": int(row["page"]),
+            "x0": round(x0, 1),
+            "y0": round(y0, 1),
+            "x1": round(x1, 1),
+            "y1": round(y1, 1),
+            "w_gap": bool(row.get("w_gap", False)),
+        })
 
-    for pno in all_pages:
+    doc.close()
+    return pd.DataFrame(updated_rows, columns=["keep", "page", "x0", "y0", "x1", "y1", "w_gap"])
+
+def prepare_pages_payload_for_canvas(raw_pdf, page_indices):
+    doc = fitz.open(stream=raw_pdf, filetype="pdf")
+    pages_data = []
+    for pno in page_indices:
         if not (0 <= pno < len(doc)):
             continue
         page = doc[pno]
-        olds = old_by_page.get(pno, [])
-        news = new_by_page.get(pno, [])
-
-        matched_old = set()
-
-        for new_box_no, nr in news:
-            best_i, best_iou = -1, 0.0
-            for i, (_old_no, or_rect) in enumerate(olds):
-                iou = _rect_iou(nr, or_rect)
-                horiz_overlap = min(nr.x1, or_rect.x1) - max(nr.x0, or_rect.x0)
-                if horiz_overlap > 0.6 * min(nr.width, or_rect.width) and abs(nr.y0 - or_rect.y0) < 15.0:
-                    iou = max(iou, 0.55)
-                if iou > best_iou:
-                    best_iou, best_i = iou, i
-
-            if best_iou < 0.25:
-                top_strip = fitz.Rect(nr.x0, nr.y0, nr.x1, min(nr.y1, nr.y0 + 28.0))
-                lines = _extract_lines_from_clip(page, top_strip)
-                if lines:
-                    first_line = lines[0]
-                    first_tok = first_line.split()[0].strip("([{.।:;,-")
-                    cleaned_prefix = re.sub(r"[0-9০-৯]+.*$", "", first_tok).strip(".:-()[] ")
-                    nk = _normalize_tag_key(cleaned_prefix)
-                    if cleaned_prefix and len(cleaned_prefix) <= 18 and nk not in existing_q:
-                        suggestions.append({
-                            "type": "question_tags",
-                            "pattern": cleaned_prefix,
-                            "page": pno + 1,
-                            "box_no": new_box_no,
-                            "sample": first_line[:65],
-                            "prompt": f"পৃষ্ঠা {pno + 1}-এর **বক্স #{new_box_no}**-এ নতুন প্রশ্নের বক্স যোগ করা হয়েছে যার শুরুতে **'{cleaned_prefix}'** আছে।"
-                        })
-                        existing_q.add(nk)
-
-            elif best_i != -1:
-                matched_old.add(best_i)
-                _old_no, or_rect = olds[best_i]
-                if abs(nr.y0 - or_rect.y0) <= 12.0 and (or_rect.y1 - nr.y1) >= 12.0:
-                    trimmed_rect = fitz.Rect(or_rect.x0, nr.y1 - 2.0, or_rect.x1, min(or_rect.y1, nr.y1 + 32.0))
-                    lines = _extract_lines_from_clip(page, trimmed_rect)
-                    if lines:
-                        first_cut_line = lines[0]
-                        first_tok = first_cut_line.split()[0].strip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-)]} ")
-                        nk = _normalize_tag_key(first_tok)
-                        if first_tok and 1 <= len(first_tok) <= 20 and nk not in existing_s:
-                            suggestions.append({
-                                "type": "solution_tags",
-                                "pattern": first_tok,
-                                "page": pno + 1,
-                                "box_no": new_box_no,
-                                "sample": first_cut_line[:65],
-                                "prompt": f"পৃষ্ঠা {pno + 1}-এর **বক্স #{new_box_no}**-এর নিচের অংশ ছেঁটে ফেলা হয়েছে যা **'{first_tok}'** দিয়ে শুরু হয়েছিল।"
-                            })
-                            existing_s.add(nk)
-
-        for i, (old_box_no, or_rect) in enumerate(olds):
-            if i not in matched_old:
-                any_overlap = any(_rect_iou(or_rect, nr) > 0.2 for _n_no, nr in news)
-                if not any_overlap:
-                    lines = _extract_lines_from_clip(page, or_rect)
-                    if lines and len(lines) <= 2:
-                        noise_candidate = lines[0].strip()
-                        nk = _normalize_tag_key(noise_candidate)
-                        if 3 <= len(noise_candidate) <= 45 and nk not in existing_noise:
-                            suggestions.append({
-                                "type": "header_noise_patterns",
-                                "pattern": re.escape(noise_candidate),
-                                "display_pattern": noise_candidate,
-                                "page": pno + 1,
-                                "box_no": old_box_no,
-                                "sample": noise_candidate,
-                                "prompt": f"পৃষ্ঠা {pno + 1}-এর **পুরোনো বক্স #{old_box_no}** (**'{noise_candidate}'**) মুছে ফেলা হয়েছে।"
-                            })
-                            existing_noise.add(nk)
-
+        W, H = float(page.rect.width), float(page.rect.height)
+        zoom = min(1.55, 920.0 / max(1.0, W))
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        img = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)
+        if pix.n == 1:
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        else:
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+        b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
+        pages_data.append({
+            "page": pno + 1,
+            "w_pt": round(W, 2),
+            "h_pt": round(H, 2),
+            "img_b64": b64
+        })
     doc.close()
-    return suggestions
+    return pages_data
+
+def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_file="canvas_editor.html"):
+    pages_json = json.dumps(pages_data)
+    boxes_json = json.dumps(initial_boxes)
+    safe_key = re.sub(r"[^a-zA-Z0-9_]", "_", file_key)
+    w_gap_pt = int(float(st.session_state.get("rv_w_gap_pt", 90)))
+
+    if os.path.exists(template_file):
+        with open(template_file, "r", encoding="utf-8") as f:
+            tpl = f.read()
+        return (
+            tpl.replace("{{PAGES_JSON}}", pages_json)
+               .replace("{{BOXES_JSON}}", boxes_json)
+               .replace("{{SAFE_KEY}}", safe_key)
+               .replace("{{W_GAP_PT}}", str(w_gap_pt))
+        )
+    return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
+
+def render_learning_suggestions():
+    suggestions = st.session_state.get("rv_suggestions", [])
+    if not suggestions:
+        return
+
+    total = len(suggestions)
+    idx = st.session_state.get("rv_sug_idx", 0)
+    if idx >= total:
+        idx = max(0, total - 1)
+    if idx < 0:
+        idx = 0
+    st.session_state["rv_sug_idx"] = idx
+
+    sug = suggestions[idx]
+    is_unlocked = st.session_state.get("is_admin_unlocked", False)
+
+    type_map = {
+        "question_tags": "প্রশ্ন ট্যাগ",
+        "solution_tags": "সমাধান ট্যাগ",
+        "header_noise_patterns": "জলছাপ"
+    }
+    rev_type_map = {v: k for k, v in type_map.items()}
+    short_type = type_map.get(sug.get("type"), "প্রশ্ন ট্যাগ")
+    disp_pat = sug.get("display_pattern", sug.get("pattern", ""))
+    box_txt = f"বক্স #{sug['box_no']}" if sug.get("box_no") else f"পৃষ্ঠা {sug.get('page', 1)}"
+    sample_txt = sug.get("sample", "")
+
+    with st.container():
+        st.markdown(f"""
+        <div class="ps-sug-card">
+            <div class="ps-sug-top">
+                <div class="ps-sug-badges">
+                    <span class="ps-sug-box">{box_txt}</span>
+                    <span class="ps-sug-type">{short_type}</span>
+                    <span class="ps-sug-pat">{disp_pat}</span>
+                </div>
+                <span class="ps-sug-count">{idx + 1} / {total}</span>
+            </div>
+            <div class="ps-sug-sample">{sample_txt}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        pin_val = ""
+        if not is_unlocked:
+            pin_val = st.text_input(
+                "পিন",
+                type="password",
+                placeholder="🔒 পিন...",
+                key=f"sug_pin_{idx}_{sug['pattern']}",
+                label_visibility="collapsed"
+            )
+
+        sug_conflict = st.session_state.get("rv_sug_conflict")
+        if sug_conflict and sug_conflict.get("pattern") == disp_pat:
+            st.error(sug_conflict["err_text"])
+            cat_opts = list(rev_type_map.keys())
+            def_c_idx = cat_opts.index(short_type) if short_type in cat_opts else 0
+            chosen_type_bn = st.selectbox(
+                f"'{disp_pat}' কোন ক্যাটাগরিতে রাখতে চান?",
+                cat_opts,
+                index=def_c_idx,
+                key=f"sug_conf_sel_{idx}_{disp_pat}"
+            )
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                if st.button("✓ স্থানান্তর ও সেভ", key=f"sug_force_{idx}_{disp_pat}"):
+                    target_cat = rev_type_map[chosen_type_bn]
+                    ok_f, msg_f = commit_rule_to_kb(
+                        target_cat,
+                        disp_pat,
+                        f"Moved and learned {target_cat} (Box #{sug.get('box_no', '?')})",
+                        force_move=True
+                    )
+                    st.session_state.pop("rv_sug_conflict", None)
+                    suggestions.pop(idx)
+                    st.session_state["rv_suggestions"] = suggestions
+                    st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
+                    if ok_f:
+                        st.toast("স্থানান্তর ও সেভ হয়েছে!")
+                    else:
+                        st.warning(msg_f)
+                    st.rerun()
+            with mc2:
+                if st.button("✕ বাতিল", key=f"sug_conf_cancel_{idx}_{disp_pat}"):
+                    st.session_state.pop("rv_sug_conflict", None)
+                    st.rerun()
+
+        b1, b2, b3, b4, b5 = st.columns([1, 1, 1.6, 1.4, 1.4])
+        with b1:
+            if st.button("❮", key="sug_prev_btn", disabled=(idx <= 0), help="আগেরটি"):
+                st.session_state.pop("rv_sug_conflict", None)
+                st.session_state["rv_sug_idx"] = idx - 1
+                st.rerun()
+        with b2:
+            if st.button("❯", key="sug_next_btn", disabled=(idx >= total - 1), help="পরেরটি"):
+                st.session_state.pop("rv_sug_conflict", None)
+                st.session_state["rv_sug_idx"] = idx + 1
+                st.rerun()
+        with b3:
+            if st.button("✓ সেভ", key=f"sug_yes_{idx}_{sug['pattern']}", help="গিটহাবে সেভ"):
+                if is_unlocked or verify_admin_pin(pin_val):
+                    st.session_state["is_admin_unlocked"] = True
+                    ok, msg = commit_rule_to_kb(
+                        sug["type"],
+                        disp_pat,
+                        f"Learned {sug['type']} (Box #{sug.get('box_no', '?')})",
+                        force_move=False
+                    )
+                    if ok:
+                        st.session_state.pop("rv_sug_conflict", None)
+                        suggestions.pop(idx)
+                        st.session_state["rv_suggestions"] = suggestions
+                        st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
+                        st.toast("সেভ হয়েছে!")
+                        st.rerun()
+                    elif msg.startswith("CONFLICT|"):
+                        parts = msg.split("|", 2)
+                        st.session_state["rv_sug_conflict"] = {
+                            "pattern": disp_pat,
+                            "err_text": parts[2]
+                        }
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+                else:
+                    st.error("ভুল পিন!")
+        with b4:
+            if st.button("✕ বাদ", key=f"sug_no_{idx}_{sug['pattern']}", help="এটি বাদ দিন"):
+                st.session_state.pop("rv_sug_conflict", None)
+                suggestions.pop(idx)
+                st.session_state["rv_suggestions"] = suggestions
+                st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
+                st.rerun()
+        with b5:
+            if st.button("🗑 সব", key="sug_clear_all_btn", help="সব মুছুন"):
+                st.session_state.pop("rv_sug_conflict", None)
+                st.session_state["rv_suggestions"] = []
+                st.session_state["rv_sug_idx"] = 0
+                st.rerun()
+
+def render_results_and_review(raw_pdf, file_key):
+    ver = st.session_state.get("rv_ver", 0)
+
+    bridge_val = st.text_input(
+        "BOX_JSON_BRIDGE",
+        value="",
+        placeholder="BOX_JSON_BRIDGE_MARKER",
+        key=f"bridge_in_{ver}",
+        label_visibility="collapsed"
+    )
+    if bridge_val and bridge_val != st.session_state.get("last_bridge_val"):
+        st.session_state["last_bridge_val"] = bridge_val
+        try:
+            old_df = st.session_state.get("rv_rows")
+            payload = json.loads(bridge_val)
+            if "w_gap_pt" in payload:
+                st.session_state["rv_w_gap_pt"] = float(payload["w_gap_pt"])
+
+            new_boxes = payload.get("boxes", [])
+            for b in new_boxes:
+                b["w_gap"] = bool(b.get("w_gap", False))
+            new_df = pd.DataFrame(new_boxes, columns=["keep", "page", "x0", "y0", "x1", "y1", "w_gap"])
+
+            learned = analyze_user_corrections(raw_pdf, old_df, new_df)
+            if learned:
+                cur_sugs = st.session_state.get("rv_suggestions", [])
+                existing_pats = {(s["type"], s["pattern"]) for s in cur_sugs}
+                for item in learned:
+                    if (item["type"], item["pattern"]) not in existing_pats:
+                        cur_sugs.append(item)
+                st.session_state["rv_suggestions"] = cur_sugs
+
+            st.session_state["rv_rows"] = new_df
+            src = fitz.open(stream=raw_pdf, filetype="pdf")
+            qs = rows_to_questions(new_df, src)
+            if qs:
+                built_pdf = build_practice_pdf(src, qs)
+                st.session_state["rv_auto_pdf"] = built_pdf
+            else:
+                st.session_state["rv_auto_pdf"] = None
+            src.close()
+        except Exception as e:
+            st.error(f"ত্রুটি: {e}")
+
+    render_learning_suggestions()
+
+    rows_df = st.session_state["rv_rows"]
+    active_count = len(rows_df[rows_df["keep"] == True]) if not rows_df.empty else 0
+
+    if st.session_state.get("rv_auto_pdf") and active_count > 0:
+        st.markdown(f"""
+        <div class="result-banner">
+            <div class="rb-left">
+                <div class="rb-check">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </div>
+                <div>
+                    <div class="rb-title">প্র্যাকটিস শিট প্রস্তুত</div>
+                    <div class="rb-sub">{st.session_state.get("rv_pages", 0)} পৃষ্ঠা স্ক্যান সম্পন্ন</div>
+                </div>
+            </div>
+            <div class="rb-stat-pill">{active_count}টি প্রশ্ন</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.download_button(
+            label="ডাউনলোড (PDF)",
+            data=st.session_state["rv_auto_pdf"],
+            file_name="Practice_Sheet.pdf",
+            mime="application/pdf",
+            key=f"dl_top_{ver}_{active_count}"
+        )
+
+    if XRAY_MODE and st.session_state.get("rv_xray_logs"):
+        with st.popover("🔬 এক্স-রে ডায়াগনস্টিক রিপোর্ট দেখুন", use_container_width=True):
+            st.dataframe(pd.DataFrame(st.session_state["rv_xray_logs"]), use_container_width=True)
+
+    with st.expander("বক্স এডিটর", expanded=False):
+        selected_indices = st.session_state.get("rv_page_indices", [0])
+        pages_payload = prepare_pages_payload_for_canvas(raw_pdf, selected_indices)
+        initial_boxes = rows_df.to_dict(orient="records") if not rows_df.empty else []
+
+        if components is not None:
+            canvas_html = build_interactive_canvas_html(pages_payload, initial_boxes, file_key)
+            components.html(canvas_html, height=820, scrolling=False)
+
+# ১০. মেইন ইন্টারফেস
+st.markdown("""
+<div class="studio-header">
+    <div>
+        <h1 class="studio-title">SMART SCANNER</h1>
+        <p class="studio-sub">Cut Out Only Questions From PDF</p>
+    </div>
+    <span class="studio-badge">VISION ENGINE</span>
+</div>
+""", unsafe_allow_html=True)
+
+uploaded_file = st.file_uploader("পিডিএফ ফাইল", type=["pdf"], label_visibility="collapsed")
+
+if uploaded_file is not None:
+    raw_pdf = uploaded_file.getvalue()
+    size_mb = len(raw_pdf) / (1024 * 1024)
+    try:
+        tmp_doc = fitz.open(stream=raw_pdf, filetype="pdf")
+        total_pdf_pages = len(tmp_doc)
+        tmp_doc.close()
+    except Exception:
+        total_pdf_pages = 0
+
+    st.markdown(f"""
+    <div class="uploaded-file-card">
+        <div class="uf-left">
+            <div class="uf-icon-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5E9E8B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+            </div>
+            <div>
+                <div class="uf-name">{uploaded_file.name}</div>
+                <div class="uf-details">{size_mb:.2f} MB • {total_pdf_pages} PAGES</div>
+            </div>
+        </div>
+        <div class="uf-badge">READY</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    file_key = f"{uploaded_file.name}|{len(raw_pdf)}"
+    if st.session_state.get("rv_file_key") != file_key:
+        for _k in ("rv_rows", "rv_auto_pdf", "rv_pages", "rv_page_indices", "last_bridge_val", "rv_suggestions", "rv_xray_logs"):
+            st.session_state.pop(_k, None)
+
+    if st.button("স্ক্যান করুন"):
+        progress_slot = st.empty()
+        try:
+            src_doc = fitz.open(stream=raw_pdf, filetype="pdf")
+            selected_pages = parse_page_range(PAGE_RANGE_TEXT, len(src_doc))
+            questions = extract_questions_from_pdf(src_doc, selected_pages, progress_slot, collect_xray=XRAY_MODE)
+            progress_slot.empty()
+
+            st.session_state["rv_rows"] = questions_to_rows(questions)
+            st.session_state["rv_auto_pdf"] = build_practice_pdf(src_doc, questions) if questions else None
+            st.session_state["rv_pages"] = len(selected_pages)
+            st.session_state["rv_page_indices"] = selected_pages
+            st.session_state["rv_file_key"] = file_key
+            st.session_state["rv_suggestions"] = []
+            st.session_state["rv_custom_gaps"] = {}
+            st.session_state["rv_ver"] = st.session_state.get("rv_ver", 0) + 1
+            src_doc.close()
+
+            if not questions:
+                st.warning("কোনো প্রশ্ন পাওয়া যায়নি। বক্স এডিটর থেকে বক্স যোগ করুন।")
+        except Exception as e:
+            progress_slot.empty()
+            st.error(f"ত্রুটি: {e}")
+
+    if APPLY_BATCH_BTN and st.session_state.get("rv_rows") is not None:
+        try:
+            updated_df = apply_sidebar_batch_transform(
+                st.session_state["rv_rows"],
+                raw_pdf,
+                BATCH_TARGET,
+                BATCH_BOX_NUMS,
+                BATCH_PAGE_NO,
+                BATCH_DX,
+                BATCH_DY,
+                BATCH_DW,
+                BATCH_DH,
+            )
+            st.session_state["rv_rows"] = updated_df
+            src_doc = fitz.open(stream=raw_pdf, filetype="pdf")
+            qs = rows_to_questions(updated_df, src_doc)
+            st.session_state["rv_auto_pdf"] = build_practice_pdf(src_doc, qs) if qs else None
+            src_doc.close()
+            st.session_state["rv_ver"] = st.session_state.get("rv_ver", 0) + 1
+        except Exception as e:
+            st.error(f"ত্রুটি: {e}")
+
+    if st.session_state.get("rv_rows") is not None and st.session_state.get("rv_file_key") == file_key:
+        render_results_and_review(raw_pdf, file_key)
+
+# ১১. বাহ্যিক canvas_editor.html ফাইল থেকে গ্লোবাল ইউআই ও ডিভাইস মোড লোড করা
+if components is not None:
+    try:
+        global_ui_html = build_interactive_canvas_html([], [], "GLOBAL_UI_SHELL")
+        components.html(global_ui_html, height=0, scrolling=False)
+    except Exception:
+        pass
+
+
+# ১২. নরম ঝাপসা ব্যাকগ্রাউন্ড ও সিন্থেসাইজ সাউন্ড এফেক্ট
+def load_ambient_and_sfx(css_file="ambient.css", js_file="sfx.js"):
+    try:
+        load_external_css(css_file)
+    except Exception:
+        pass
+    if components is None or not os.path.exists(js_file):
+        return
+    try:
+        with open(js_file, "r", encoding="utf-8") as f:
+            js_src = f.read()
+        js_literal = json.dumps(js_src).replace("</", "<\\/")
+        components.html(
+            "<script>(function(){try{"
+            "var P=window.parent,D=P.document;"
+            "if(D.getElementById('ps-sfx-engine'))return;"
+            "var s=D.createElement('script');s.id='ps-sfx-engine';"
+            "s.textContent=" + js_literal + ";"
+            "D.head.appendChild(s);"
+            "}catch(e){}})();</script>",
+            height=0,
+            scrolling=False,
+        )
+    except Exception:
+        pass
+
+load_ambient_and_sfx()
