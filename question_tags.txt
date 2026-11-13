@@ -1,6 +1,5 @@
 # নিচে প্রতি লাইনে একটি করে প্রশ্ন শুরুর ট্যাগ লিখুন
 Q
-Question
 Ques
 Prob
 Problem
@@ -18,3 +17,4 @@ Example
 |
 Q::
 বিগত
+Question
