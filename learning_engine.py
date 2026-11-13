@@ -30,12 +30,27 @@ CATEGORY_LABELS_BN = {
 
 EXCLUSIVE_CATEGORIES = ["question_tags", "solution_tags", "header_noise_patterns"]
 
+# যে চিহ্নগুলো কখনোই প্রশ্ন শুরুর ট্যাগ হতে পারবে না (ভুয়া বক্স প্রতিরোধক)
+INVALID_Q_TAG_SET = {"|", "।", "/", "\\", "-", "—", "–", ".", ":", ";", ",", "?", "!", "(", ")", "[", "]", "{", "}", "বিগত"}
+ALLOWED_SYMBOL_Q_TAGS = {"❑", "▫", "▪", "■", "□"}
+
+
+def _is_valid_question_tag(val):
+    s = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(val).strip()).strip()
+    if not s or s in INVALID_Q_TAG_SET:
+        return False
+    if s in ALLOWED_SYMBOL_Q_TAGS:
+        return True
+    if not re.search(r"[A-Za-zঅ-ঔক-হ]", s):
+        return False
+    return True
+
 
 def get_default_kb():
     return {
         "question_tags": [
             "Q", "Question", "Ques", "Prob", "Problem", "Ex", "Example",
-            "প্রশ্ন", "এমসিকিউ", "সমস্যা", "উদাহরণ", "❑", "▫", "▪", "■", "□"
+            "প্রশ্ন", "এমসিকিউ", "সমস্যা", "উদাহরণ", "❑", "▫", "▪", "■", "□", "Q::"
         ],
         "solution_tags": [
             "Sol", "Soln", "Solⁿ", "Sol^n", "So1", "So1n", "S0l", "S0ln", "5ol", "5oln",
@@ -45,7 +60,8 @@ def get_default_kb():
             "ব্যাখ্যা", "ব্যখ্যা", "ব্যাখা", "ব্যখা", "্যাখ্যা", "াখ্যা", "রাখ্যা", "য্যাখ্যা", "বাখ্যা", "ব্যাখ",
             "বিকল্প", "িকল্প", "শর্টকাট",
             "প্র্যাকটিস প্রবলেম", "প্র্যাকটিস", "প্রশ্ন-সলভ", "প্রশ্ন-সল্‌ভ",
-            "Written", "লিখিত", "বিগত ভর্তি", "DËi:", "DËi", "mgvavb", "e¨vL¨v"
+            "Written", "লিখিত", "বিগত ভর্তি", "DËi:", "DËi", "mgvavb", "e¨vL¨v",
+            "৪1\":", "Sol\":", "৪91%:", "ডগা:", "৪01\":", "Sol™"
         ],
         "header_noise_patterns": [
             "Educationalpdf", "Educationaf", "Rhombus\\s*Publications",
@@ -54,15 +70,13 @@ def get_default_kb():
         "bullet_stop_chars": ["➢", "➤", "➣", "•", "♦", "►"],
         "option_units": ["mol", "L", "g", "kg", "mL", "ml", "cm", "mm", "m", "gm", "sec", "min", "s", "×", "x", "10^", "10"],
         "dotless_question_keywords": [
-            "কত", "কোনটি", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
-            "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "মোল", "লিটার", "গ্রাম",
-            "গ্যাস", "পরমাণু", "অণু", "STP", "NTP"
+            "কত", "কোনটি", "কোনটির", "নির্ণয়", "নির্ণয়"
         ],
         "valid_crop_keywords": [
             "কত", "কোনটি", "কোন", "হচ্ছে", "থাকে", "থাকবে", "রয়েছে", "রয়েছে", "আছে",
             "নির্ণয়", "নির্ণয়", "ওজন", "ভর", "সংখ্যা", "আয়তন", "আয়তন", "ঘনমাত্রা",
             "মোল", "লিটার", "গ্যাস", "পরমাণু", "অণু", "বিক্রিয়া", "বিক্রিয়া", "লেখচিত্র",
-            "what", "which", "find", "calculate", "value"
+            "সঠিক", "নিচের", "what", "which", "find", "calculate", "value"
         ],
         "equation_question_guard_words": [
             "কত", "কোনটি", "হলে", "যদি", "নির্ণয়", "নির্ণয়", "সমান", "অর্ধেক", "দ্বিগুণ"
@@ -70,7 +84,7 @@ def get_default_kb():
         "layout_thresholds": {
             "max_question_number": 160,
             "min_start_gap_pt": 16.0,
-            "max_q_x_offset": 52.0,
+            "max_q_x_offset": 26.0,
             "max_sol_x_offset": 120.0,
             "max_internal_blank_gap_pt": 24.0
         }
@@ -122,13 +136,20 @@ def load_knowledge_base():
         except Exception:
             pass
 
-    # টেক্সট ফাইলে ম্যানুয়ালি নতুন কোনো ট্যাগ যোগ করা হলে তা গ্রহণ করা
     txt_q = _read_txt_lines("question_tags.txt")
     txt_s = _read_txt_lines("solution_tags.txt")
     if txt_q:
         kb["question_tags"] = _dedup_list_preserve_order(txt_q + kb.get("question_tags", []))
     if txt_s:
         kb["solution_tags"] = _dedup_list_preserve_order(txt_s + kb.get("solution_tags", []))
+
+    # প্রশ্ন ট্যাগ থেকে ভুয়া পাইপ ('|') বা যতিচিহ্ন পরিষ্কার করা
+    kb["question_tags"] = [t for t in _dedup_list_preserve_order(kb.get("question_tags", [])) if _is_valid_question_tag(t)]
+
+    # max_q_x_offset যেন কখনোই অতিরিক্ত বড় না থাকে
+    if isinstance(kb.get("layout_thresholds"), dict):
+        if float(kb["layout_thresholds"].get("max_q_x_offset", 26.0)) > 32.0:
+            kb["layout_thresholds"]["max_q_x_offset"] = 26.0
 
     for k in list(kb.keys()):
         if isinstance(kb[k], list):
@@ -138,10 +159,6 @@ def load_knowledge_base():
 
 
 def find_all_tag_conflicts(kb=None):
-    """
-    সবগুলো ফাইল (JSON ও TXT) সরাসরি চেক করে আন্তঃক্যাটাগরি সংঘর্ষ এবং
-    একই ফাইলের ভেতরের ডুপ্লিকেট ট্যাগগুলোর নাম ও অবস্থান বের করে।
-    """
     raw_kb = get_default_kb()
     if os.path.exists(KB_FILENAME):
         try:
@@ -153,8 +170,10 @@ def find_all_tag_conflicts(kb=None):
         except Exception:
             pass
 
+    raw_kb["question_tags"] = [t for t in raw_kb.get("question_tags", []) if _is_valid_question_tag(t)]
+
     txt_sources = {
-        "question_tags": _read_txt_lines("question_tags.txt"),
+        "question_tags": [t for t in _read_txt_lines("question_tags.txt") if _is_valid_question_tag(t)],
         "solution_tags": _read_txt_lines("solution_tags.txt"),
     }
 
@@ -170,7 +189,6 @@ def find_all_tag_conflicts(kb=None):
         json_list = raw_kb.get(cat, [])
         txt_list = txt_sources.get(cat, [])
 
-        # JSON ফাইলে কতবার আছে
         json_counts = {}
         for item in json_list:
             nk = _normalize_tag_key(item)
@@ -185,7 +203,6 @@ def find_all_tag_conflicts(kb=None):
             if cat not in info["cats"]:
                 info["cats"].append(cat)
 
-        # TXT ফাইলে কতবার আছে
         txt_counts = {}
         for item in txt_list:
             nk = _normalize_tag_key(item)
@@ -200,7 +217,6 @@ def find_all_tag_conflicts(kb=None):
             if cat not in info["cats"]:
                 info["cats"].append(cat)
 
-        # একই ক্যাটাগরির ভেতরে ডুপ্লিকেট হলে নোট রাখা
         all_nks = set(json_counts.keys()) | set(txt_counts.keys())
         for nk in all_nks:
             jc = json_counts.get(nk, 0)
@@ -234,7 +250,6 @@ def find_all_tag_conflicts(kb=None):
 
 
 def check_tag_conflict(category, new_value, kb=None):
-    """একটি নতুন ট্যাগ অন্য কোনো ক্যাটাগরিতে আগে থেকেই আছে কি না তা পরীক্ষা করে।"""
     if kb is None:
         kb = load_knowledge_base()
 
@@ -336,10 +351,7 @@ def push_file_to_github(filepath, content_str, commit_message):
 
 
 def sync_all_kb_files(kb, commit_note="Sync and deduplicate knowledge base"):
-    """
-    knowledge_base.json, question_tags.txt এবং solution_tags.txt ফাইল তিনটি
-    ডুপ্লিকেটমুক্ত করে একসাথে লোকালি ও গিটহাবে সেভ করে।
-    """
+    kb["question_tags"] = [t for t in kb.get("question_tags", []) if _is_valid_question_tag(t)]
     for k in list(kb.keys()):
         if isinstance(kb[k], list):
             kb[k] = _dedup_list_preserve_order(kb[k])
@@ -365,10 +377,6 @@ def sync_all_kb_files(kb, commit_note="Sync and deduplicate knowledge base"):
 
 
 def resolve_tag_conflicts(resolutions_map, commit_note="Resolved duplicate tag conflicts"):
-    """
-    ব্যবহারকারীর নির্বাচন অনুযায়ী ডুপ্লিকেট ট্যাগগুলো নির্দিষ্ট একটি ক্যাটাগরিতে রেখে
-    বাকি সব ক্যাটাগরি থেকে মুছে ফাইলগুলো ডুপ্লিকেটমুক্ত করে।
-    """
     kb = load_knowledge_base()
 
     for norm_k, chosen_cat in resolutions_map.items():
@@ -384,6 +392,8 @@ def resolve_tag_conflicts(resolutions_map, commit_note="Resolved duplicate tag c
             kb[cat] = new_list
 
         if chosen_cat in EXCLUSIVE_CATEGORIES and raw_display:
+            if chosen_cat == "question_tags" and not _is_valid_question_tag(raw_display):
+                continue
             val_to_add = re.escape(raw_display) if chosen_cat == "header_noise_patterns" else raw_display
             kb[chosen_cat].append(val_to_add)
 
@@ -400,6 +410,9 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
         return False, f"অজানা ক্যাটাগরি: {category}"
 
     raw_clean = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", val).strip()
+    if category == "question_tags" and not _is_valid_question_tag(raw_clean):
+        return False, f"'{raw_clean}' বৈধ প্রশ্ন ট্যাগ নয় (যতিচিহ্ন বা বর্ডার নয়েজ)।"
+
     nk = _normalize_tag_key(raw_clean)
 
     conflict_info = check_tag_conflict(category, raw_clean, kb)
@@ -411,7 +424,6 @@ def commit_rule_to_kb(category, new_value, commit_note="Auto-learn new PDF patte
             f"CONFLICT|{other_keys}|⚠️ '{raw_clean}' ট্যাগটি ইতিমধ্যে [{other_names}]-এ আছে! আপনি কি এটিকে কোন ক্যাটাগরিতে রাখতে চান তা নির্বাচন করবেন?"
         )
 
-    # যদি force_move=True হয়, তবে অন্য সব সাংঘর্ষিক ক্যাটাগরি থেকে আগে মুছে ফেলা হবে
     if category in EXCLUSIVE_CATEGORIES:
         for other_c in EXCLUSIVE_CATEGORIES:
             if other_c != category:
@@ -574,10 +586,10 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                 lines = _extract_lines_from_clip(page, top_strip)
                 if lines:
                     first_line = lines[0]
-                    first_tok = first_line.split()[0].strip("([{.।:;,-")
-                    cleaned_prefix = re.sub(r"[0-9০-৯]+.*$", "", first_tok).strip(".:-()[] ")
+                    first_tok = first_line.split()[0].strip("([{.।:;,-|")
+                    cleaned_prefix = re.sub(r"[0-9০-৯]+.*$", "", first_tok).strip(".:-()[]| ")
                     nk = _normalize_tag_key(cleaned_prefix)
-                    if cleaned_prefix and len(cleaned_prefix) <= 18 and nk not in existing_q:
+                    if cleaned_prefix and len(cleaned_prefix) <= 18 and _is_valid_question_tag(cleaned_prefix) and nk not in existing_q:
                         suggestions.append({
                             "type": "question_tags",
                             "pattern": cleaned_prefix,
@@ -596,7 +608,7 @@ def analyze_user_corrections(raw_pdf, old_rows_df, new_rows_df):
                     lines = _extract_lines_from_clip(page, trimmed_rect)
                     if lines:
                         first_cut_line = lines[0]
-                        first_tok = first_cut_line.split()[0].strip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-)]} ")
+                        first_tok = first_cut_line.split()[0].strip("([{•*-➢➤.@©\"'`| ").rstrip(".:;ঃ-)]}| ")
                         nk = _normalize_tag_key(first_tok)
                         if first_tok and 1 <= len(first_tok) <= 20 and nk not in existing_s:
                             suggestions.append({
