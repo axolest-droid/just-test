@@ -107,7 +107,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-with st.popover("পেজ সেটআপ", use_container_width=True):
+    with st.popover("পেজ সেটআপ", use_container_width=True):
         PAGE_MODE = st.radio("মোড", ["অটো", "বই", "স্লাইড"], index=0, horizontal=True)
         COLUMNS_PER_PAGE = st.radio("কলাম", [1, 2], index=1, horizontal=True)
         PAGE_RANGE_TEXT = st.text_input("পৃষ্ঠা", "", placeholder="1-5 বা ফাঁকা")
