@@ -32,6 +32,10 @@ from learning_engine import (
     commit_rule_to_kb,
     analyze_user_corrections,
     verify_admin_pin,
+    find_all_tag_conflicts,
+    resolve_tag_conflicts,
+    sync_all_kb_files,
+    CATEGORY_LABELS_BN,
     KB_FILENAME
 )
 
