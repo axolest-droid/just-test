@@ -144,141 +144,150 @@ with st.sidebar:
             BATCH_DY = st.number_input("নিচে/উপরে (Y)", value=0.0, step=2.0, format="%.1f")
             BATCH_DH = st.number_input("উচ্চতা (H)", value=0.0, step=2.0, format="%.1f")
 
-        APPLY_BATCH_BTN = st.button("প্রয়োগ")
+APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
-    # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে ডায়াগনস্টিক প্যানেল
+    # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে প্যানেল
     with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
-        XRAY_MODE = st.checkbox("এক্স-রে ডায়াগনস্টিক মোড", value=False, help="চালু থাকলে কোন লাইন কেন প্রশ্ন বা সমাধান হিসেবে চিহ্নিত হলো তার রিপোর্ট দেখাবে।")
+        XRAY_MODE = st.checkbox("এক্স-রে মোড", value=False)
 
         if not st.session_state.get("is_admin_unlocked", False):
-            st.caption("🔒 গিটহাবে নতুন নিয়ম সেভ করতে অ্যাডমিন পিন দিন:")
-            pin_in = st.text_input("অ্যাডমিন পিন", type="password", placeholder="পিন নম্বর লিখুন", key="sb_pin_input", label_visibility="collapsed")
-            if st.button("আনলক করুন", key="btn_unlock_admin"):
+            pin_in = st.text_input("পিন", type="password", placeholder="🔒 পিন...", key="sb_pin_input", label_visibility="collapsed")
+            if st.button("আনলক", key="btn_unlock_admin"):
                 if verify_admin_pin(pin_in):
                     st.session_state["is_admin_unlocked"] = True
-                    st.success("অ্যাডমিন মোড আনলক হয়েছে!")
                     st.rerun()
                 else:
-                    st.error("ভুল পিন! আবার চেষ্টা করুন।")
+                    st.error("ভুল পিন!")
         else:
-            st.caption("🔓 **অ্যাডমিন মোড সচল** (গিটহাব অটো-সেভ চালু)")
             RULE_CAT_LABELS = {
-                "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
-                "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
-                "জলছাপ/হেডার (Header Noise)": "header_noise_patterns",
-                "বুলেট চিহ্ন (Bullet Stop)": "bullet_stop_chars",
-                "বৈধ প্রশ্নের শব্দ (Valid Keyword)": "valid_crop_keywords"
+                "সমাধান": "solution_tags",
+                "প্রশ্ন": "question_tags",
+                "জলছাপ": "header_noise_patterns",
+                "বুলেট": "bullet_stop_chars",
+                "কীওয়ার্ড": "valid_crop_keywords"
             }
             CAT_KEY_TO_LABEL = {v: k for k, v in RULE_CAT_LABELS.items()}
 
-            sel_cat_label = st.selectbox("নতুন নিয়মের ধরন", list(RULE_CAT_LABELS.keys()))
-            manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা Q::")
+            sel_cat_label = st.selectbox("ক্যাটাগরি", list(RULE_CAT_LABELS.keys()))
+            manual_rule_val = st.text_input("ট্যাগ", "", placeholder="ট্যাগ লিখুন...")
 
-            if st.button("গিটহাবে সেভ করুন", key="btn_manual_rule"):
+            if st.button("✓ সেভ", key="btn_manual_rule"):
                 if manual_rule_val.strip():
                     cat_key = RULE_CAT_LABELS[sel_cat_label]
                     raw_in = manual_rule_val.strip()
-                    ok, msg = commit_rule_to_kb(cat_key, raw_in, "Manual rule added from Sidebar", force_move=False)
+                    ok, msg = commit_rule_to_kb(cat_key, raw_in, "Manual rule", force_move=False)
                     if ok:
                         st.session_state.pop("sb_conflict_state", None)
-                        st.success(msg)
+                        st.toast("সেভ হয়েছে!")
                         st.rerun()
                     elif msg.startswith("CONFLICT|"):
                         parts = msg.split("|", 2)
                         st.session_state["sb_conflict_state"] = {
                             "val": raw_in,
                             "target_cat": cat_key,
-                            "other_cats": parts[1].split(","),
-                            "err_text": parts[2]
+                            "other_cats": parts[1].split(",")
                         }
                     else:
                         st.warning(msg)
-                else:
-                    st.warning("অনুগ্রহ করে একটি শব্দ লিখুন।")
 
-            # যদি অন্য ক্যাটাগরিতে আগে থেকেই ট্যাগটি থাকে তবে ক্যাটাগরি বেছে নেওয়ার অপশন
+            # নতুন ট্যাগ অন্য ক্যাটাগরিতে থাকলে ১-শব্দের সিলেকশন
             c_state = st.session_state.get("sb_conflict_state")
             if c_state:
-                st.error(c_state["err_text"])
+                other_short = ", ".join(CAT_KEY_TO_LABEL.get(c, c) for c in c_state["other_cats"])
+                st.error(f"⚠️ '{c_state['val']}' আছে: {other_short}")
                 choose_options = {
-                    "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
-                    "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
-                    "জলছাপ/হেডার (Header Noise)": "header_noise_patterns"
+                    "প্রশ্ন": "question_tags",
+                    "সমাধান": "solution_tags",
+                    "জলছাপ": "header_noise_patterns"
                 }
-                def_label = CAT_KEY_TO_LABEL.get(c_state["target_cat"], "প্রশ্ন ট্যাগ (Question Tag)")
+                def_label = CAT_KEY_TO_LABEL.get(c_state["target_cat"], "প্রশ্ন")
                 opt_list = list(choose_options.keys())
                 def_idx = opt_list.index(def_label) if def_label in opt_list else 0
                 resolved_label = st.selectbox(
-                    f"'{c_state['val']}' ট্যাগটি কোন ক্যাটাগরিতে রাখতে চান?",
+                    "রাখুন:",
                     opt_list,
                     index=def_idx,
                     key="sb_conflict_resolve_sel"
                 )
                 rc1, rc2 = st.columns(2)
                 with rc1:
-                    if st.button("✓ স্থানান্তর করুন", key="btn_confirm_move"):
+                    if st.button("✓ স্থানান্তর", key="btn_confirm_move"):
                         chosen_k = choose_options[resolved_label]
-                        ok_m, msg_m = commit_rule_to_kb(
-                            chosen_k,
-                            c_state["val"],
-                            f"Moved tag to {chosen_k}",
-                            force_move=True
-                        )
+                        commit_rule_to_kb(chosen_k, c_state["val"], f"Moved to {chosen_k}", force_move=True)
                         st.session_state.pop("sb_conflict_state", None)
-                        if ok_m:
-                            st.success(msg_m)
-                            st.rerun()
-                        else:
-                            st.warning(msg_m)
+                        st.toast("স্থানান্তরিত!")
+                        st.rerun()
                 with rc2:
                     if st.button("✕ বাতিল", key="btn_cancel_move"):
                         st.session_state.pop("sb_conflict_state", None)
                         st.rerun()
 
             st.markdown("---")
-            # আগে থেকে থাকা সব ডুপ্লিকেট ট্যাগ এক ক্লিকে খুঁজে বের করা ও সমাধানের টুল
-            conflicts_list, internal_dups = find_all_tag_conflicts(KB)
-            if conflicts_list or internal_dups > 0:
-                st.warning(f"🧹 **{len(conflicts_list)}টি** আন্তঃক্যাটাগরি সংঘর্ষ এবং **{internal_dups}টি** ডুপ্লিকেট পাওয়া গেছে!")
+            # সব ধরনের ডুপ্লিকেট ও সংঘর্ষের তালিকা এবং ক্যাটাগরি নির্বাচন
+            conflicts_list, _ = find_all_tag_conflicts(KB)
+            cat_choice_map = {
+                "প্রশ্ন": "question_tags",
+                "সমাধান": "solution_tags",
+                "জলছাপ": "header_noise_patterns",
+                "মুছুন": "DELETE"
+            }
+            rev_choice_map = {v: k for k, v in cat_choice_map.items()}
+
+            if conflicts_list:
+                st.warning(f"🧹 ডুপ্লিকেট: {len(conflicts_list)}টি")
                 resolutions_map = {}
-                cat_choice_map = {
-                    "শুধু প্রশ্ন ট্যাগে রাখুন": "question_tags",
-                    "শুধু সমাধান ট্যাগে রাখুন": "solution_tags",
-                    "শুধু জলছাপ/নয়েজে রাখুন": "header_noise_patterns",
-                    "সব জায়গা থেকে মুছে ফেলুন": "DELETE"
-                }
+                choice_keys = list(cat_choice_map.keys())
                 for c_idx, c_item in enumerate(conflicts_list):
-                    cur_cats_bn = ", ".join(CATEGORY_LABELS_BN.get(c, c).split(" (")[0] for c in c_item["categories"])
+                    def_lbl = rev_choice_map.get(c_item.get("default_cat"), "প্রশ্ন")
+                    d_idx = choice_keys.index(def_lbl) if def_lbl in choice_keys else 0
                     sel_res = st.selectbox(
-                        f"ট্যাগ: '{c_item['display']}' (আছে: {cur_cats_bn})",
-                        list(cat_choice_map.keys()),
+                        f"'{c_item['display']}' • [{c_item['where']}]",
+                        choice_keys,
+                        index=d_idx,
                         key=f"dup_fix_{c_idx}_{c_item['norm_key']}"
                     )
                     resolutions_map[c_item["norm_key"]] = cat_choice_map[sel_res]
 
-                if st.button("🧹 সব ডুপ্লিকেট ফিক্স ও সেভ করুন", key="btn_fix_all_dups"):
-                    ok_d, msg_d = resolve_tag_conflicts(resolutions_map)
-                    if ok_d:
-                        st.success("সব ডুপ্লিকেট পরিষ্কার করে গিটহাবে সেভ করা হয়েছে!")
-                        st.rerun()
-                    else:
-                        st.warning(msg_d)
+                if st.button("🧹 ফিক্স", key="btn_fix_all_dups"):
+                    resolve_tag_conflicts(resolutions_map)
+                    st.toast("ডুপ্লিকেট ফিক্সড!")
+                    st.rerun()
             else:
-                st.caption("✅ কোনো ডুপ্লিকেট বা সাংঘর্ষিক ট্যাগ নেই।")
-                if st.button("🔄 ফাইল সিঙ্ক ও ক্লিনআপ", key="btn_manual_sync"):
-                    ok_s, msg_s = sync_all_kb_files(KB, "Manual sync and deduplication")
-                    if ok_s:
-                        st.success("সব ট্যাগ ফাইল সিঙ্ক হয়েছে!")
-                        st.rerun()
-                    else:
-                        st.warning(msg_s)
+                st.caption("✅ ডুপ্লিকেট নেই")
 
-            if st.button("লক করুন", key="btn_lock_admin"):
-                st.session_state["is_admin_unlocked"] = False
-                st.rerun()
+            # যেকোনো বিদ্যমান ট্যাগ দেখা ও ক্যাটাগরি বদলানো/মোছার মিনিমাল টুল
+            with st.popover("🔍 ট্যাগ তালিকা", use_container_width=True):
+                all_tag_items = []
+                for ck, clbl in [("question_tags", "প্রশ্ন"), ("solution_tags", "সমাধান"), ("header_noise_patterns", "জলছাপ")]:
+                    for t_val in KB.get(ck, []):
+                        disp_t = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(t_val).strip())
+                        all_tag_items.append((f"{disp_t} • [{clbl}]", disp_t, ck))
+
+                if all_tag_items:
+                    sel_tag_str = st.selectbox("ট্যাগ", [x[0] for x in all_tag_items], key="inspect_tag_sel")
+                    picked = next(x for x in all_tag_items if x[0] == sel_tag_str)
+                    cur_lbl = rev_choice_map.get(picked[2], "প্রশ্ন")
+                    c_keys = list(cat_choice_map.keys())
+                    new_lbl = st.selectbox("রাখুন", c_keys, index=c_keys.index(cur_lbl), key="inspect_cat_sel")
+                    if st.button("✓ আপডেট", key="btn_inspect_update"):
+                        target_c = cat_choice_map[new_lbl]
+                        resolve_tag_conflicts({picked[1].lower(): target_c}, f"Updated {picked[1]}")
+                        st.toast("আপডেট হয়েছে!")
+                        st.rerun()
+
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("🔄 সিঙ্ক", key="btn_manual_sync"):
+                    sync_all_kb_files(KB, "Manual sync")
+                    st.toast("সিঙ্ক সম্পন্ন!")
+                    st.rerun()
+            with bc2:
+                if st.button("🔒 লক", key="btn_lock_admin"):
+                    st.session_state["is_admin_unlocked"] = False
+                    st.rerun()
 
         st.download_button(
-            label="রুলস ব্যাকআপ (JSON)",
+            label="⬇ ব্যাকআপ",
             data=json.dumps(KB, ensure_ascii=False, indent=2).encode("utf-8"),
             file_name=KB_FILENAME,
             mime="application/json",
