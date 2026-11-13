@@ -1,7 +1,6 @@
 {
   "question_tags": [
     "Q",
-    "Question",
     "Ques",
     "Prob",
     "Problem",
@@ -18,7 +17,8 @@
     "□",
     "|",
     "Q::",
-    "বিগত"
+    "বিগত",
+    "Question"
   ],
   "solution_tags": [
     "Sol",
