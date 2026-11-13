@@ -147,7 +147,7 @@ with st.sidebar:
 APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
     # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে প্যানেল
-    with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
+   with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
         XRAY_MODE = st.checkbox("এক্স-রে মোড", value=False)
 
         if not st.session_state.get("is_admin_unlocked", False):
