@@ -147,7 +147,7 @@ with st.sidebar:
         APPLY_BATCH_BTN = st.button("প্রয়োগ")
 
     # পিন-সুরক্ষিত লাইভ ট্রেনিং ও এক্স-রে ডায়াগনস্টিক প্যানেল
-    with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
+with st.expander("স্মার্ট ট্রেনিং ও এক্স-রে", expanded=False):
         XRAY_MODE = st.checkbox("এক্স-রে ডায়াগনস্টিক মোড", value=False, help="চালু থাকলে কোন লাইন কেন প্রশ্ন বা সমাধান হিসেবে চিহ্নিত হলো তার রিপোর্ট দেখাবে।")
 
         if not st.session_state.get("is_admin_unlocked", False):
@@ -169,20 +169,109 @@ with st.sidebar:
                 "বুলেট চিহ্ন (Bullet Stop)": "bullet_stop_chars",
                 "বৈধ প্রশ্নের শব্দ (Valid Keyword)": "valid_crop_keywords"
             }
+            CAT_KEY_TO_LABEL = {v: k for k, v in RULE_CAT_LABELS.items()}
+
             sel_cat_label = st.selectbox("নতুন নিয়মের ধরন", list(RULE_CAT_LABELS.keys()))
-            manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা উদ্ভাস")
+            manual_rule_val = st.text_input("নতুন শব্দ বা ট্যাগ", "", placeholder="যেমন: ব্যাখ্যাঃ বা Q::")
+
             if st.button("গিটহাবে সেভ করুন", key="btn_manual_rule"):
                 if manual_rule_val.strip():
                     cat_key = RULE_CAT_LABELS[sel_cat_label]
-                    val_to_save = re.escape(manual_rule_val.strip()) if cat_key == "header_noise_patterns" else manual_rule_val.strip()
-                    ok, msg = commit_rule_to_kb(cat_key, val_to_save, "Manual rule added from Sidebar")
+                    raw_in = manual_rule_val.strip()
+                    ok, msg = commit_rule_to_kb(cat_key, raw_in, "Manual rule added from Sidebar", force_move=False)
                     if ok:
+                        st.session_state.pop("sb_conflict_state", None)
                         st.success(msg)
                         st.rerun()
+                    elif msg.startswith("CONFLICT|"):
+                        parts = msg.split("|", 2)
+                        st.session_state["sb_conflict_state"] = {
+                            "val": raw_in,
+                            "target_cat": cat_key,
+                            "other_cats": parts[1].split(","),
+                            "err_text": parts[2]
+                        }
                     else:
                         st.warning(msg)
                 else:
                     st.warning("অনুগ্রহ করে একটি শব্দ লিখুন।")
+
+            # যদি অন্য ক্যাটাগরিতে আগে থেকেই ট্যাগটি থাকে তবে ক্যাটাগরি বেছে নেওয়ার অপশন
+            c_state = st.session_state.get("sb_conflict_state")
+            if c_state:
+                st.error(c_state["err_text"])
+                choose_options = {
+                    "প্রশ্ন ট্যাগ (Question Tag)": "question_tags",
+                    "সমাধান ট্যাগ (Solution Tag)": "solution_tags",
+                    "জলছাপ/হেডার (Header Noise)": "header_noise_patterns"
+                }
+                def_label = CAT_KEY_TO_LABEL.get(c_state["target_cat"], "প্রশ্ন ট্যাগ (Question Tag)")
+                opt_list = list(choose_options.keys())
+                def_idx = opt_list.index(def_label) if def_label in opt_list else 0
+                resolved_label = st.selectbox(
+                    f"'{c_state['val']}' ট্যাগটি কোন ক্যাটাগরিতে রাখতে চান?",
+                    opt_list,
+                    index=def_idx,
+                    key="sb_conflict_resolve_sel"
+                )
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    if st.button("✓ স্থানান্তর করুন", key="btn_confirm_move"):
+                        chosen_k = choose_options[resolved_label]
+                        ok_m, msg_m = commit_rule_to_kb(
+                            chosen_k,
+                            c_state["val"],
+                            f"Moved tag to {chosen_k}",
+                            force_move=True
+                        )
+                        st.session_state.pop("sb_conflict_state", None)
+                        if ok_m:
+                            st.success(msg_m)
+                            st.rerun()
+                        else:
+                            st.warning(msg_m)
+                with rc2:
+                    if st.button("✕ বাতিল", key="btn_cancel_move"):
+                        st.session_state.pop("sb_conflict_state", None)
+                        st.rerun()
+
+            st.markdown("---")
+            # আগে থেকে থাকা সব ডুপ্লিকেট ট্যাগ এক ক্লিকে খুঁজে বের করা ও সমাধানের টুল
+            conflicts_list, internal_dups = find_all_tag_conflicts(KB)
+            if conflicts_list or internal_dups > 0:
+                st.warning(f"🧹 **{len(conflicts_list)}টি** আন্তঃক্যাটাগরি সংঘর্ষ এবং **{internal_dups}টি** ডুপ্লিকেট পাওয়া গেছে!")
+                resolutions_map = {}
+                cat_choice_map = {
+                    "শুধু প্রশ্ন ট্যাগে রাখুন": "question_tags",
+                    "শুধু সমাধান ট্যাগে রাখুন": "solution_tags",
+                    "শুধু জলছাপ/নয়েজে রাখুন": "header_noise_patterns",
+                    "সব জায়গা থেকে মুছে ফেলুন": "DELETE"
+                }
+                for c_idx, c_item in enumerate(conflicts_list):
+                    cur_cats_bn = ", ".join(CATEGORY_LABELS_BN.get(c, c).split(" (")[0] for c in c_item["categories"])
+                    sel_res = st.selectbox(
+                        f"ট্যাগ: '{c_item['display']}' (আছে: {cur_cats_bn})",
+                        list(cat_choice_map.keys()),
+                        key=f"dup_fix_{c_idx}_{c_item['norm_key']}"
+                    )
+                    resolutions_map[c_item["norm_key"]] = cat_choice_map[sel_res]
+
+                if st.button("🧹 সব ডুপ্লিকেট ফিক্স ও সেভ করুন", key="btn_fix_all_dups"):
+                    ok_d, msg_d = resolve_tag_conflicts(resolutions_map)
+                    if ok_d:
+                        st.success("সব ডুপ্লিকেট পরিষ্কার করে গিটহাবে সেভ করা হয়েছে!")
+                        st.rerun()
+                    else:
+                        st.warning(msg_d)
+            else:
+                st.caption("✅ কোনো ডুপ্লিকেট বা সাংঘর্ষিক ট্যাগ নেই।")
+                if st.button("🔄 ফাইল সিঙ্ক ও ক্লিনআপ", key="btn_manual_sync"):
+                    ok_s, msg_s = sync_all_kb_files(KB, "Manual sync and deduplication")
+                    if ok_s:
+                        st.success("সব ট্যাগ ফাইল সিঙ্ক হয়েছে!")
+                        st.rerun()
+                    else:
+                        st.warning(msg_s)
 
             if st.button("লক করুন", key="btn_lock_admin"):
                 st.session_state["is_admin_unlocked"] = False
@@ -228,10 +317,10 @@ eq_guard_kw_pattern = "|".join(re.escape(w) for w in EQ_GUARD_KW_LIST) if EQ_GUA
 noise_pattern_str = "|".join(HEADER_NOISE_LIST) if HEADER_NOISE_LIST else "Educationalpdf"
 
 NUM_RE = re.compile(
-    rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-]?\s*)?([0-9০-৯]{{1,3}})[\.\)\]\:](?![0-9০-৯])",
+    rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-\ঃ\/\|]*\s*)?([0-9০-৯]{{1,3}})[\.\)\]\:\ঃ](?![0-9০-৯])",
     re.IGNORECASE
 )
-PURE_PREFIX_RE = re.compile(rf"^(?:{q_prefix_pattern})[\.\:\-]?\s*[0-9০-৯]*$", re.IGNORECASE)
+PURE_PREFIX_RE = re.compile(rf"^(?:{q_prefix_pattern})[\.\:\-\ঃ\/\|]*\s*[0-9০-৯]*$", re.IGNORECASE)
 OPT_TOKEN_RE = re.compile(r"^(?:[\(\[]?[a-dA-Dক-ঘ][\)\]\.]|[ⓐⓑⓒⓓⓔ①②③④])$")
 BULLET_STOP_RE = re.compile(rf"^[{bullet_chars_escaped}]\s*")
 OPT_UNIT_RE = re.compile(rf"^(?:{unit_pattern}|10\^?)$", re.IGNORECASE)
@@ -1217,7 +1306,7 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
 def render_learning_suggestions():
-    """একটি স্থির ও মিনিমাল বক্সে একটার পর একটা প্যাটার্ন দেখানোর ক্যারোসেল কার্ড।"""
+    """একটি স্থির ও মিনিমাল বক্সে একটার পর একটা প্যাটার্ন দেখানোর ক্যারোসেল কার্ড (কনফ্লিক্ট চেকারসহ)।"""
     suggestions = st.session_state.get("rv_suggestions", [])
     if not suggestions:
         return
@@ -1238,7 +1327,8 @@ def render_learning_suggestions():
         "solution_tags": "সমাধান ট্যাগ",
         "header_noise_patterns": "জলছাপ"
     }
-    short_type = type_map.get(sug.get("type"), "প্যাটার্ন")
+    rev_type_map = {v: k for k, v in type_map.items()}
+    short_type = type_map.get(sug.get("type"), "প্রশ্ন ট্যাগ")
     disp_pat = sug.get("display_pattern", sug.get("pattern", ""))
     box_txt = f"বক্স #{sug['box_no']}" if sug.get("box_no") else f"পৃষ্ঠা {sug.get('page', 1)}"
     sample_txt = sug.get("sample", "")
@@ -1268,13 +1358,51 @@ def render_learning_suggestions():
                 label_visibility="collapsed"
             )
 
+        # যদি এই প্যাটার্নটি অন্য কোনো ক্যাটাগরিতে আগে থেকেই থেকে থাকে তবে সতর্কবার্তা ও ক্যাটাগরি নির্বাচন দেখানো
+        sug_conflict = st.session_state.get("rv_sug_conflict")
+        if sug_conflict and sug_conflict.get("pattern") == disp_pat:
+            st.error(sug_conflict["err_text"])
+            cat_opts = list(rev_type_map.keys())
+            def_c_idx = cat_opts.index(short_type) if short_type in cat_opts else 0
+            chosen_type_bn = st.selectbox(
+                f"'{disp_pat}' কোন ক্যাটাগরিতে রাখতে চান?",
+                cat_opts,
+                index=def_c_idx,
+                key=f"sug_conf_sel_{idx}_{disp_pat}"
+            )
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                if st.button("✓ স্থানান্তর ও সেভ", key=f"sug_force_{idx}_{disp_pat}"):
+                    target_cat = rev_type_map[chosen_type_bn]
+                    ok_f, msg_f = commit_rule_to_kb(
+                        target_cat,
+                        disp_pat,
+                        f"Moved and learned {target_cat} (Box #{sug.get('box_no', '?')})",
+                        force_move=True
+                    )
+                    st.session_state.pop("rv_sug_conflict", None)
+                    suggestions.pop(idx)
+                    st.session_state["rv_suggestions"] = suggestions
+                    st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
+                    if ok_f:
+                        st.toast("স্থানান্তর ও সেভ হয়েছে!")
+                    else:
+                        st.warning(msg_f)
+                    st.rerun()
+            with mc2:
+                if st.button("✕ বাতিল", key=f"sug_conf_cancel_{idx}_{disp_pat}"):
+                    st.session_state.pop("rv_sug_conflict", None)
+                    st.rerun()
+
         b1, b2, b3, b4, b5 = st.columns([1, 1, 1.6, 1.4, 1.4])
         with b1:
             if st.button("❮", key="sug_prev_btn", disabled=(idx <= 0), help="আগেরটি"):
+                st.session_state.pop("rv_sug_conflict", None)
                 st.session_state["rv_sug_idx"] = idx - 1
                 st.rerun()
         with b2:
             if st.button("❯", key="sug_next_btn", disabled=(idx >= total - 1), help="পরেরটি"):
+                st.session_state.pop("rv_sug_conflict", None)
                 st.session_state["rv_sug_idx"] = idx + 1
                 st.rerun()
         with b3:
@@ -1283,27 +1411,38 @@ def render_learning_suggestions():
                     st.session_state["is_admin_unlocked"] = True
                     ok, msg = commit_rule_to_kb(
                         sug["type"],
-                        sug["pattern"],
-                        f"Learned {sug['type']} (Box #{sug.get('box_no', '?')})"
+                        disp_pat,
+                        f"Learned {sug['type']} (Box #{sug.get('box_no', '?')})",
+                        force_move=False
                     )
-                    suggestions.pop(idx)
-                    st.session_state["rv_suggestions"] = suggestions
-                    st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
                     if ok:
+                        st.session_state.pop("rv_sug_conflict", None)
+                        suggestions.pop(idx)
+                        st.session_state["rv_suggestions"] = suggestions
+                        st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
                         st.toast("সেভ হয়েছে!")
+                        st.rerun()
+                    elif msg.startswith("CONFLICT|"):
+                        parts = msg.split("|", 2)
+                        st.session_state["rv_sug_conflict"] = {
+                            "pattern": disp_pat,
+                            "err_text": parts[2]
+                        }
+                        st.rerun()
                     else:
                         st.warning(msg)
-                    st.rerun()
                 else:
                     st.error("ভুল পিন!")
         with b4:
             if st.button("✕ বাদ", key=f"sug_no_{idx}_{sug['pattern']}", help="এটি বাদ দিন"):
+                st.session_state.pop("rv_sug_conflict", None)
                 suggestions.pop(idx)
                 st.session_state["rv_suggestions"] = suggestions
                 st.session_state["rv_sug_idx"] = max(0, min(idx, len(suggestions) - 1))
                 st.rerun()
         with b5:
             if st.button("🗑 সব", key="sug_clear_all_btn", help="সব মুছুন"):
+                st.session_state.pop("rv_sug_conflict", None)
                 st.session_state["rv_suggestions"] = []
                 st.session_state["rv_sug_idx"] = 0
                 st.rerun()
