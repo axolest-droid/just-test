@@ -21,11 +21,11 @@ DEFAULT_REPO = "axolest-droid/just-test"
 DEFAULT_BRANCH = "main"
 
 CATEGORY_LABELS_BN = {
-    "question_tags": "প্রশ্ন ট্যাগ (Question Tag)",
-    "solution_tags": "সমাধান ট্যাগ (Solution Tag)",
-    "header_noise_patterns": "জলছাপ/হেডার (Header Noise)",
-    "bullet_stop_chars": "বুলেট চিহ্ন (Bullet Stop)",
-    "valid_crop_keywords": "বৈধ প্রশ্নের শব্দ (Valid Keyword)"
+    "question_tags": "প্রশ্ন",
+    "solution_tags": "সমাধান",
+    "header_noise_patterns": "জলছাপ",
+    "bullet_stop_chars": "বুলেট",
+    "valid_crop_keywords": "কীওয়ার্ড"
 }
 
 EXCLUSIVE_CATEGORIES = ["question_tags", "solution_tags", "header_noise_patterns"]
@@ -139,40 +139,96 @@ def load_knowledge_base():
 
 def find_all_tag_conflicts(kb=None):
     """
-    সবগুলো ফাইল চেক করে দেখে কোনো ট্যাগ একাধিক ক্যাটাগরিতে আছে কি না
-    অথবা ফাইলগুলোর ভেতরে কোনো ডুপ্লিকেট লাইন আছে কি না।
+    সবগুলো ফাইল (JSON ও TXT) সরাসরি চেক করে আন্তঃক্যাটাগরি সংঘর্ষ এবং
+    একই ফাইলের ভেতরের ডুপ্লিকেট ট্যাগগুলোর নাম ও অবস্থান বের করে।
     """
-    if kb is None:
-        kb = load_knowledge_base()
+    raw_kb = get_default_kb()
+    if os.path.exists(KB_FILENAME):
+        try:
+            with open(KB_FILENAME, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            for k, v in loaded.items():
+                if isinstance(v, list):
+                    raw_kb[k] = [str(x).strip() for x in v if str(x).strip()]
+        except Exception:
+            pass
 
-    key_to_cats = {}
-    key_to_display = {}
+    txt_sources = {
+        "question_tags": _read_txt_lines("question_tags.txt"),
+        "solution_tags": _read_txt_lines("solution_tags.txt"),
+    }
+
+    cat_short = {
+        "question_tags": "প্রশ্ন",
+        "solution_tags": "সমাধান",
+        "header_noise_patterns": "জলছাপ"
+    }
+
+    key_info = {}
 
     for cat in EXCLUSIVE_CATEGORIES:
-        for item in kb.get(cat, []):
+        json_list = raw_kb.get(cat, [])
+        txt_list = txt_sources.get(cat, [])
+
+        # JSON ফাইলে কতবার আছে
+        json_counts = {}
+        for item in json_list:
             nk = _normalize_tag_key(item)
             if not nk:
                 continue
-            key_to_cats.setdefault(nk, []).append(cat)
-            if nk not in key_to_display:
-                key_to_display[nk] = re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip())
+            json_counts[nk] = json_counts.get(nk, 0) + 1
+            info = key_info.setdefault(nk, {
+                "display": re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip()),
+                "cats": [],
+                "dup_notes": []
+            })
+            if cat not in info["cats"]:
+                info["cats"].append(cat)
+
+        # TXT ফাইলে কতবার আছে
+        txt_counts = {}
+        for item in txt_list:
+            nk = _normalize_tag_key(item)
+            if not nk:
+                continue
+            txt_counts[nk] = txt_counts.get(nk, 0) + 1
+            info = key_info.setdefault(nk, {
+                "display": re.sub(r"\\([.\:\-\(\)\[\]\s])", r"\1", str(item).strip()),
+                "cats": [],
+                "dup_notes": []
+            })
+            if cat not in info["cats"]:
+                info["cats"].append(cat)
+
+        # একই ক্যাটাগরির ভেতরে ডুপ্লিকেট হলে নোট রাখা
+        all_nks = set(json_counts.keys()) | set(txt_counts.keys())
+        for nk in all_nks:
+            jc = json_counts.get(nk, 0)
+            tc = txt_counts.get(nk, 0)
+            max_c = max(jc, tc)
+            if max_c > 1:
+                key_info[nk]["dup_notes"].append(f"{cat_short[cat]}×{max_c}")
 
     conflicts = []
-    for nk, cats in key_to_cats.items():
-        unique_cats = list(dict.fromkeys(cats))
-        if len(unique_cats) > 1:
+    internal_dup_count = 0
+
+    for nk, info in key_info.items():
+        cats = info["cats"]
+        d_notes = info["dup_notes"]
+        if len(cats) > 1 or len(d_notes) > 0:
+            if len(d_notes) > 0:
+                internal_dup_count += 1
+            where_parts = [cat_short.get(c, c) for c in cats]
+            where_str = " + ".join(where_parts)
+            if d_notes:
+                where_str = ", ".join(d_notes) if len(cats) == 1 else f"{where_str} ({', '.join(d_notes)})"
             conflicts.append({
                 "norm_key": nk,
-                "display": key_to_display[nk],
-                "categories": unique_cats
+                "display": info["display"],
+                "categories": cats,
+                "where": where_str,
+                "default_cat": cats[0]
             })
-
-    # কাঁচা ফাইলে অভ্যন্তরীণ ডুপ্লিকেট বা অসামঞ্জস্য আছে কি না তা গণনা করা
-    internal_dup_count = 0
-    for fn, cat_k in [("question_tags.txt", "question_tags"), ("solution_tags.txt", "solution_tags")]:
-        raw_lines = _read_txt_lines(fn)
-        dedup_lines = _dedup_list_preserve_order(raw_lines)
-        internal_dup_count += max(0, len(raw_lines) - len(dedup_lines))
 
     return conflicts, internal_dup_count
 
