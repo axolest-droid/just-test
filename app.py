@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-app.py — SMART SCANNER (PIN-Protected Learning & Blank-Gap Trimming Edition)
+app.py — SMART SCANNER (Hybrid Layout Geometry + 3-Pass OCR Edition)
 ================================================================================
 AI INSTRUCTION MANUAL (যেকোনো এআই বটের জন্য নির্দেশনা):
 1. এই প্রোগ্রামের সমস্ত নিয়ম `knowledge_base.json` ফাইলে সংরক্ষিত আছে।
 2. প্রশ্নের নিচে উত্তর লেখার জন্য রাখা ফাঁকা জায়গা (Blank Writing Space) বাদ দেওয়ার লজিক
    `trim_vertical_whitespace()` ফাংশনে এবং `MAX_BLANK_GAP_PT` স্লাইডারে নিয়ন্ত্রিত হয়।
-3. গিটহাবে নতুন নিয়ম সেভ করার জন্য `ADMIN_PIN` দ্বারা নিরাপত্তা নিশ্চিত করা হয়েছে।
+3. `detect_geometric_option_stops()` এবং `count_option_circles()` ফাংশন দুটি ভিজ্যুয়াল
+   লেআউট ও অপশন গ্রিড বিশ্লেষণ করে 'উত্তর:' বা 'ব্যাখ্যা:' অস্পষ্ট হলেও নিখুঁতভাবে বক্স কাটে।
+4. গিটহাবে নতুন নিয়ম সেভ করার জন্য `ADMIN_PIN` দ্বারা নিরাপত্তা নিশ্চিত করা হয়েছে।
 ================================================================================
 """
 
@@ -21,6 +23,17 @@ import numpy as np
 import pandas as pd
 import pytesseract
 import streamlit as st
+
+# উইন্ডোজ পিসিতে লোকালহোস্টে চালানোর সময় ডিফল্ট Tesseract পাথ অটো-ডিটেক্ট করা
+if os.name == "nt":
+    for _t_path in (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expanduser(r"~\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
+    ):
+        if os.path.exists(_t_path):
+            pytesseract.pytesseract.tesseract_cmd = _t_path
+            break
 
 try:
     import streamlit.components.v1 as components
@@ -190,7 +203,6 @@ with st.sidebar:
                     else:
                         st.warning(msg)
 
-            # নতুন ট্যাগ অন্য ক্যাটাগরিতে থাকলে ১-শব্দের সিলেকশন
             c_state = st.session_state.get("sb_conflict_state")
             if c_state:
                 other_short = ", ".join(CAT_KEY_TO_LABEL.get(c, c) for c in c_state["other_cats"])
@@ -223,7 +235,6 @@ with st.sidebar:
                         st.rerun()
 
             st.markdown("---")
-            # সব ধরনের ডুপ্লিকেট ও সংঘর্ষের তালিকা এবং ক্যাটাগরি নির্বাচন
             conflicts_list, _ = find_all_tag_conflicts(KB)
             cat_choice_map = {
                 "প্রশ্ন": "question_tags",
@@ -255,7 +266,6 @@ with st.sidebar:
             else:
                 st.caption("✅ ডুপ্লিকেট নেই")
 
-            # যেকোনো বিদ্যমান ট্যাগ দেখা ও ক্যাটাগরি বদলানো/মোছার মিনিমাল টুল
             with st.popover("🔍 ট্যাগ তালিকা", use_container_width=True):
                 all_tag_items = []
                 for ck, clbl in [("question_tags", "প্রশ্ন"), ("solution_tags", "সমাধান"), ("header_noise_patterns", "জলছাপ")]:
@@ -326,11 +336,11 @@ eq_guard_kw_pattern = "|".join(re.escape(w) for w in EQ_GUARD_KW_LIST) if EQ_GUA
 noise_pattern_str = "|".join(HEADER_NOISE_LIST) if HEADER_NOISE_LIST else "Educationalpdf"
 
 NUM_RE = re.compile(
-    rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-\ঃ\/\|]*\s*)?([0-9০-৯]{{1,3}})[\.\)\]\:\ঃ](?![0-9০-৯])",
+    rf"^[\(\[]?(?:(?:{q_prefix_pattern})\s*[\.\:\-\ঃ\/\|]*\s*)?([0-9০-৯]{{1,3}})[\.\)\]\:\ঃ\…]+(?![0-9০-৯])",
     re.IGNORECASE
 )
 PURE_PREFIX_RE = re.compile(rf"^(?:{q_prefix_pattern})[\.\:\-\ঃ\/\|]*\s*[0-9০-৯]*$", re.IGNORECASE)
-OPT_TOKEN_RE = re.compile(r"^(?:[\(\[]?[a-dA-Dক-ঘ][\)\]\.]|[ⓐⓑⓒⓓⓔ①②③④])$")
+OPT_TOKEN_RE = re.compile(r"^(?:[\(\[]?[a-dA-Dক-ঘ][\)\]\.]|[ⓐⓑⓒⓓⓔ①②③④⑧⑨])$")
 BULLET_STOP_RE = re.compile(rf"^[{bullet_chars_escaped}]\s*")
 OPT_UNIT_RE = re.compile(rf"^(?:{unit_pattern}|10\^?)$", re.IGNORECASE)
 
@@ -413,7 +423,7 @@ def line_has_solution_marker(line, joined_text, max_sol_x):
     return False, None
 
 # ==============================================================================
-# ৬. ইমেজ প্রসেসিং, বাঁকা বিভাজক রেখা ও স্মার্ট ব্ল্যাঙ্ক-গ্যাপ ছাঁটাই
+# ৬. ইমেজ প্রসেসিং, অপশন সার্কেল ডিটেকশন ও স্মার্ট ব্ল্যাঙ্ক-গ্যাপ ছাঁটাই
 # ==============================================================================
 def parse_page_range(range_str, total_pages):
     range_str = range_str.strip()
@@ -455,6 +465,27 @@ def get_ink_mask(gray_img):
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 14)
     clean = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     return clean > 0
+
+def count_option_circles(gray_img, x0_pt, y0_pt, x1_pt, y1_pt):
+    """ওপেনসিভি দিয়ে অপশনের গোল বৃত্ত (ক, খ, গ, ঘ বা ⓐ, ⓑ, ⓒ, ⓓ) গণনা করে।"""
+    x0, y0 = max(0, int(x0_pt * SC)), max(0, int(y0_pt * SC))
+    x1, y1 = min(gray_img.shape[1], int(x1_pt * SC)), min(gray_img.shape[0], int(y1_pt * SC))
+    if x1 - x0 < 18 or y1 - y0 < 7:
+        return 0
+    roi = gray_img[y0:y1, x0:x1]
+    bw = cv2.adaptiveThreshold(roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 10)
+    cnts, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    circles = 0
+    min_d, max_d = int(6.2 * SC), int(16.5 * SC)
+    for c in cnts:
+        bx, by, bw_c, bh_c = cv2.boundingRect(c)
+        if min_d <= bw_c <= max_d and min_d <= bh_c <= max_d:
+            aspect = bw_c / float(max(1, bh_c))
+            if 0.72 <= aspect <= 1.38:
+                area = cv2.contourArea(c)
+                if area > 0.35 * (bw_c * bh_c):
+                    circles += 1
+    return circles
 
 def find_divider(gray_img, W, H):
     x_start, x_end = int(W * 0.36 * SC), int(W * 0.64 * SC)
@@ -543,11 +574,6 @@ def snap_cut_line(ink, xr, y_target, up_win=2.5, down_win=1.0):
     return (a + best_row) / SC
 
 def trim_vertical_whitespace(ink, xr, top, bot, max_gap_pt=None):
-    """
-    প্রশ্নের উপরের ও নিচের সাদা অংশ ছাঁটাই করে।
-    যদি প্রশ্নের নিচে উত্তর লেখার জন্য বড় ফাঁকা জায়গা (max_gap_pt এর বেশি) থাকে,
-    তবে খাড়া বর্ডার বা টানা দাগ উপেক্ষা করে ঠিক লেখার নিচেই বক্স থামিয়ে দেয়।
-    """
     if max_gap_pt is None:
         max_gap_pt = float(MAX_BLANK_GAP_PT)
 
@@ -559,10 +585,8 @@ def trim_vertical_whitespace(ink, xr, top, bot, max_gap_pt=None):
         return top, bot
 
     roi = ink[y0:y1, x0:x1].astype(np.uint8)
-    # পাশের খাড়া মার্জিন বা বক্সের বর্ডার মুছে ফেলা
     v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(14, int(18 * SC))))
     v_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, v_kernel)
-    # উত্তর লেখার জন্য টানা লম্বা অনুভূমিক দাগ থাকলে তা উপেক্ষা করা
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(25, int((x1 - x0) * 0.48)), 1))
     h_lines = cv2.morphologyEx(roi, cv2.MORPH_OPEN, h_kernel)
     clean_roi = roi & (~v_lines) & (~h_lines)
@@ -585,7 +609,7 @@ def trim_vertical_whitespace(ink, xr, top, bot, max_gap_pt=None):
     return max(top, (y0 + first_row) / SC - 3.5), min(bot, (y0 + last_row) / SC + 5.0)
 
 # ==============================================================================
-# ৭. ৩-পাস শক্তিশালী OCR ইঞ্জিন ও মার্কার বিশ্লেষণ
+# ৭. হাইব্রিড লেআউট পার্সার + ৩-পাস ওসিআর ইঞ্জিন
 # ==============================================================================
 def group_words_into_lines(words):
     if not words:
@@ -641,52 +665,61 @@ def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn
         clean_bw = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 14)
         base_x = x0_px / SC
 
-        ocr_data = pytesseract.image_to_data(
-            clean_bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT
-        )
-        for i in range(len(ocr_data["text"])):
-            txt = ocr_data["text"][i].strip()
-            conf = int(ocr_data["conf"][i]) if str(ocr_data["conf"][i]).lstrip("-").isdigit() else -1
-            if not txt or conf < 16:
-                continue
-            wx0 = base_x + ocr_data["left"][i] / SC
-            wy0 = ocr_data["top"][i] / SC
-            wx1 = wx0 + ocr_data["width"][i] / SC
-            wy1 = wy0 + ocr_data["height"][i] / SC
-            if 12 < wy0 < H - 18:
-                ocr_words.append((wx0, wy0, wx1, wy1, txt))
+        try:
+            ocr_data = pytesseract.image_to_data(
+                clean_bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(ocr_data["text"])):
+                txt = ocr_data["text"][i].strip()
+                conf = int(ocr_data["conf"][i]) if str(ocr_data["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 14:
+                    continue
+                wx0 = base_x + ocr_data["left"][i] / SC
+                wy0 = ocr_data["top"][i] / SC
+                wx1 = wx0 + ocr_data["width"][i] / SC
+                wy1 = wy0 + ocr_data["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_words.append((wx0, wy0, wx1, wy1, txt))
+        except Exception:
+            pass
 
-        thin_bw = cv2.dilate(clean_bw, np.ones((2, 2), np.uint8), iterations=1)
-        ocr_data2 = pytesseract.image_to_data(
-            thin_bw, lang="ben+eng", config="--psm 6", output_type=pytesseract.Output.DICT
-        )
-        for i in range(len(ocr_data2["text"])):
-            txt = ocr_data2["text"][i].strip()
-            conf = int(ocr_data2["conf"][i]) if str(ocr_data2["conf"][i]).lstrip("-").isdigit() else -1
-            if not txt or conf < 16:
-                continue
-            wx0 = base_x + ocr_data2["left"][i] / SC
-            wy0 = ocr_data2["top"][i] / SC
-            wx1 = wx0 + ocr_data2["width"][i] / SC
-            wy1 = wy0 + ocr_data2["height"][i] / SC
-            if 12 < wy0 < H - 18:
-                ocr_thin_words.append((wx0, wy0, wx1, wy1, txt))
+        try:
+            thin_bw = cv2.dilate(clean_bw, np.ones((2, 2), np.uint8), iterations=1)
+            ocr_data2 = pytesseract.image_to_data(
+                thin_bw, lang="ben+eng", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(ocr_data2["text"])):
+                txt = ocr_data2["text"][i].strip()
+                conf = int(ocr_data2["conf"][i]) if str(ocr_data2["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 14:
+                    continue
+                wx0 = base_x + ocr_data2["left"][i] / SC
+                wy0 = ocr_data2["top"][i] / SC
+                wx1 = wx0 + ocr_data2["width"][i] / SC
+                wy1 = wy0 + ocr_data2["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_thin_words.append((wx0, wy0, wx1, wy1, txt))
+        except Exception:
+            pass
 
-        left_strip_w = min(clean_bw.shape[1], int(105 * SC))
-        eng_data = pytesseract.image_to_data(
-            clean_bw[:, :left_strip_w], lang="eng", config="--psm 6", output_type=pytesseract.Output.DICT
-        )
-        for i in range(len(eng_data["text"])):
-            txt = eng_data["text"][i].strip()
-            conf = int(eng_data["conf"][i]) if str(eng_data["conf"][i]).lstrip("-").isdigit() else -1
-            if not txt or conf < 15:
-                continue
-            wx0 = base_x + eng_data["left"][i] / SC
-            wy0 = eng_data["top"][i] / SC
-            wx1 = wx0 + eng_data["width"][i] / SC
-            wy1 = wy0 + eng_data["height"][i] / SC
-            if 12 < wy0 < H - 18:
-                ocr_eng_words.append((wx0, wy0, wx1, wy1, txt))
+        try:
+            left_strip_w = min(clean_bw.shape[1], int(105 * SC))
+            eng_data = pytesseract.image_to_data(
+                clean_bw[:, :left_strip_w], lang="eng", config="--psm 6", output_type=pytesseract.Output.DICT
+            )
+            for i in range(len(eng_data["text"])):
+                txt = eng_data["text"][i].strip()
+                conf = int(eng_data["conf"][i]) if str(eng_data["conf"][i]).lstrip("-").isdigit() else -1
+                if not txt or conf < 12:
+                    continue
+                wx0 = base_x + eng_data["left"][i] / SC
+                wy0 = eng_data["top"][i] / SC
+                wx1 = wx0 + eng_data["width"][i] / SC
+                wy1 = wy0 + eng_data["height"][i] / SC
+                if 12 < wy0 < H - 18:
+                    ocr_eng_words.append((wx0, wy0, wx1, wy1, txt))
+        except Exception:
+            pass
 
     return (
         pdf_lines,
@@ -695,7 +728,7 @@ def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn
         group_words_into_lines(ocr_eng_words),
     )
 
-def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray_log=None, page_no=1, col_no=1):
+def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray_log=None, page_no=1, col_no=1, ink=None, col_right_x=None):
     starts, stops = [], []
     if not lines:
         return starts, stops
@@ -759,7 +792,8 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
                     is_dotless_q = True
 
             if is_num_q or is_dotless_q:
-                if re.match(r"^[0-9০-৯]+\.[0-9০-৯]+", c_t0):
+                # দশমিক সংখ্যা (যেমন 2.5 বা 10.0) বাদ দেওয়া, কিন্তু শূন্যস্থান (8...) রাখা
+                if re.match(r"^[0-9০-৯]+\.[0-9০-৯]+$", c_t0):
                     continue
                 m_num = NUM_RE.match(c_t0)
                 qn = _b2e_int(m_num.group(1)) if (m_num and m_num.group(1)) else (_b2e_int(c_t0) if is_dotless_q else None)
@@ -767,24 +801,119 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
                     continue
 
                 rest_text = " ".join(w[4] for w in line[idx_c + 1:]).strip()
-                if not rest_text:
+
+                # বাম স্ট্রিপের ওসিআর-এ শুধু নম্বর থাকলে ডানপাশের কালির ঘনত্ব (Ink Mask) চেক করা
+                has_visual_stem_ink = False
+                if ink is not None and col_right_x is not None:
+                    rx0 = max(0, int((c_wx1 + 4.0) * SC))
+                    rx1 = min(ink.shape[1], int((col_right_x - 8.0) * SC))
+                    ry0 = max(0, int((c_wy0 - 1.0) * SC))
+                    ry1 = min(ink.shape[0], int((c_wy1 + 2.0) * SC))
+                    if rx1 - rx0 > int(35 * SC) and ry1 > ry0:
+                        if float(ink[ry0:ry1, rx0:rx1].mean()) > 0.025:
+                            has_visual_stem_ink = True
+
+                if not rest_text and not has_visual_stem_ink:
                     continue
 
-                if ("=" in rest_text or "⇒" in rest_text or "∴" in rest_text) and "?" not in rest_text:
+                if rest_text and ("=" in rest_text or "⇒" in rest_text or "∴" in rest_text) and "?" not in rest_text:
                     if not EQ_GUARD_KW_RE.search(rest_text):
                         continue
 
-                has_q_words = bool(re.search(r"[অ-ঔক-হ]{2,}|[a-zA-Z]{3,}|\?", rest_text))
+                has_q_words = bool(re.search(r"[অ-ঔক-হ]{2,}|[a-zA-Z]{3,}|\?", rest_text)) or has_visual_stem_ink
                 if not has_q_words and len(line) > idx_c + 1:
                     nxt_w = line[idx_c + 1]
                     if OPT_UNIT_RE.match(nxt_w[4]) or (nxt_w[0] - c_wx1 < 3.5 and re.match(r"^[0-9০-৯]", nxt_w[4])):
                         continue
+
                 starts.append(c_wy0 - 1.5)
                 if xray_log is not None:
                     xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(c_wy0, 1), "সিদ্ধান্ত": "শুরু (প্রশ্ন শনাক্ত)", "লাইন": joined_text[:70]})
                 break
 
     return starts, stops
+
+def detect_geometric_option_stops(gray_img, ink, ref_lines, clean_starts, actual_left_x, actual_right_x, H, xray_log=None, page_no=1, col_no=1):
+    """
+    হাইব্রিড লেআউট পার্সার:
+    প্রতিটি প্রশ্নের নিচে থাকা অপশন সারি (গোল বৃত্ত ক,খ,গ,ঘ বা পাশাপাশি ২/৪ কলাম অপশন বক্স)
+    জ্যামিতিকভাবে শনাক্ত করে। অপশন শেষ হয়ে যখনই পরবর্তী লাইন ('উত্তর:' বা 'ব্যাখ্যা:')
+    আবার বাম মার্জিনে ফিরে আসে, ঠিক সেখানেই বক্স কাটার স্টপ পয়েন্ট তৈরি করে।
+    """
+    geo_stops = []
+    if not clean_starts or not ref_lines:
+        return geo_stops
+
+    col_w = max(100.0, actual_right_x - actual_left_x)
+    board_tag_re = re.compile(r"[\[\(].*(?:1[0-9]|2[0-6]).*[\]\)]")
+
+    for qi, st_y in enumerate(clean_starts):
+        nxt_q = clean_starts[qi + 1] if (qi + 1) < len(clean_starts) else (H - 16.0)
+        q_lines = [l for l in ref_lines if l and (st_y + 6.0 <= l[0][1] < nxt_q - 2.0)]
+        if not q_lines:
+            continue
+
+        seen_options = False
+        total_opt_circles = 0
+        opt_rows_count = 0
+        last_opt_y1 = st_y + 10.0
+
+        for ln in q_lines:
+            lx0 = min(w[0] for w in ln)
+            ly0 = min(w[1] for w in ln)
+            lx1 = max(w[2] for w in ln)
+            ly1 = max(w[3] for w in ln)
+            joined = " ".join(w[4] for w in ln).strip()
+
+            # লাইনের ভেতরে পাশাপাশি ২য় অপশন কলামের শুরু আছে কি না (যেমন ক ... খ ...)
+            non_tag_words = [w for w in ln if not board_tag_re.search(w[4])]
+            has_mid_col_gap = False
+            for wi in range(1, len(non_tag_words)):
+                gap = non_tag_words[wi][0] - non_tag_words[wi - 1][2]
+                rel_x = non_tag_words[wi][0] - actual_left_x
+                if gap >= 11.0 and (col_w * 0.28 <= rel_x <= col_w * 0.72):
+                    has_mid_col_gap = True
+                    break
+
+            circle_cnt = count_option_circles(gray_img, actual_left_x - 4.0, ly0 - 2.0, actual_right_x + 4.0, ly1 + 2.0)
+            has_opt_tok = bool(OPT_TOKEN_RE.match(ln[0][4])) or any(c in joined for c in ("ⓐ", "ⓑ", "ⓒ", "ⓓ", "①", "②", "③", "④"))
+            is_indented = (lx0 > actual_left_x + 6.5) and (lx0 < actual_left_x + col_w * 0.45)
+            returns_to_left = (lx0 <= actual_left_x + 6.5)
+
+            # একটি লাইন তখনই অপশন সারি হবে যখন তাতে ২+ বৃত্ত থাকবে, অথবা ইনডেন্টেড হবে, অথবা মাঝখানে ২য় অপশন কলাম থাকবে
+            is_opt_row = (
+                (circle_cnt >= 2)
+                or (is_indented and (circle_cnt >= 1 or has_mid_col_gap or has_opt_tok))
+                or (has_mid_col_gap and not is_solution_text(ln[0][4]))
+            )
+
+            if not seen_options:
+                if is_opt_row:
+                    seen_options = True
+                    opt_rows_count = 1
+                    total_opt_circles += max(2, circle_cnt)
+                    last_opt_y1 = ly1
+            else:
+                # যদি ইতিমধ্যে ৪টি অপশন (বা ২ সারি অপশন) দেখা হয়ে গিয়ে থাকে এবং নতুন লাইন বাম মার্জিনে শুরু হয় -> এটি নিশ্চিতভাবে 'উত্তর:' বা 'ব্যাখ্যা:'!
+                if returns_to_left and (total_opt_circles >= 4 or opt_rows_count >= 2 or circle_cnt <= 1) and not (circle_cnt >= 2 and has_mid_col_gap):
+                    stop_pt = ly0 - 1.5
+                    geo_stops.append(stop_pt)
+                    if xray_log is not None:
+                        xray_log.append({
+                            "পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(ly0, 1),
+                            "সিদ্ধান্ত": "থামো (লেআউট পার্সার: অপশন শেষে উত্তর/ব্যাখ্যা)", "লাইন": joined[:70]
+                        })
+                    break
+                elif is_opt_row and (ly0 - last_opt_y1) <= 22.0:
+                    opt_rows_count += 1
+                    total_opt_circles += max(2, circle_cnt)
+                    last_opt_y1 = ly1
+                else:
+                    stop_pt = ly0 - 1.5
+                    geo_stops.append(stop_pt)
+                    break
+
+    return geo_stops
 
 def is_valid_question_crop(lines_in_crop):
     if not lines_in_crop:
@@ -798,7 +927,7 @@ def is_valid_question_crop(lines_in_crop):
         return False
 
     has_q_mark = "?" in full_txt
-    has_options = bool(re.search(r"(?:[\(\[]?[ক-ঘa-dA-D][\)\]\.]|[ⓐⓑⓒⓓ])", full_txt))
+    has_options = bool(re.search(r"(?:[\(\[]?[ক-ঘa-dA-D][\)\]\.]|[ⓐⓑⓒⓓ①②③④])", full_txt))
     has_q_words = bool(VALID_CROP_KW_RE.search(full_txt))
     eq_count = full_txt.count("=") + full_txt.count("⇒")
 
@@ -876,7 +1005,6 @@ def trim_solution_inside_slide_box(page, gray, ink, rect):
     except Exception:
         pass
 
-    # বক্সের ভেতরে নিচে উত্তর লেখার ফাঁকা জায়গা থাকলে তা ছাঁটাই করা
     try:
         _, trimmed_bot = trim_vertical_whitespace(
             ink,
@@ -1016,13 +1144,12 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
             h_barriers = detect_horizontal_barriers(gray, cx0, cx1)
 
             log_target = xray_logs if collect_xray else None
-            p_starts, p_stops = analyze_lines_for_markers(pdf_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1)
-            o_starts, o_stops = analyze_lines_for_markers(ocr_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1)
-            t_starts, t_stops = analyze_lines_for_markers(ocr_thin_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1)
-            e_starts, e_stops = analyze_lines_for_markers(ocr_eng_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1)
+            p_starts, p_stops = analyze_lines_for_markers(pdf_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1, ink, actual_right_x)
+            o_starts, o_stops = analyze_lines_for_markers(ocr_lines, actual_left_x, div_slope, H, log_target, pno + 1, col_i + 1, ink, actual_right_x)
+            t_starts, t_stops = analyze_lines_for_markers(ocr_thin_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1, ink, actual_right_x)
+            e_starts, e_stops = analyze_lines_for_markers(ocr_eng_lines, actual_left_x, div_slope, H, None, pno + 1, col_i + 1, ink, actual_right_x)
 
             all_starts = sorted(p_starts + o_starts + t_starts + e_starts)
-            all_stops = sorted(p_stops + o_stops + t_stops + e_stops + list(h_barriers))
 
             clean_starts = []
             for st_y in all_starts:
@@ -1030,6 +1157,16 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
                     clean_starts.append(st_y)
 
             ref_lines = ocr_lines if len(ocr_lines) >= len(pdf_lines) else pdf_lines
+            if len(ocr_thin_lines) > len(ref_lines):
+                ref_lines = ocr_thin_lines
+
+            # হাইব্রিড লেআউট পার্সার দিয়ে অপশন গ্রিডের নিচে স্বয়ংক্রিয় স্টপ পয়েন্ট বের করা
+            geo_stops = detect_geometric_option_stops(
+                gray, ink, ref_lines, clean_starts, actual_left_x, actual_right_x, H,
+                xray_log=log_target, page_no=pno + 1, col_no=col_i + 1
+            )
+
+            all_stops = sorted(p_stops + o_stops + t_stops + e_stops + geo_stops + list(h_barriers))
 
             for qi, st_y in enumerate(clean_starts):
                 nxt_q = clean_starts[qi + 1] if qi + 1 < len(clean_starts) else (H - 16.0)
@@ -1037,7 +1174,8 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
                 end_y = min(cand_stops) if cand_stops else nxt_q
 
                 crop_lines = [l for l in ref_lines if l and (st_y - 2.0 <= l[0][1] <= end_y + 2.0)]
-                if not is_valid_question_crop(crop_lines):
+                has_geo_circles = count_option_circles(gray, actual_left_x - 4.0, st_y, actual_right_x + 4.0, end_y) >= 2
+                if not has_geo_circles and not is_valid_question_crop(crop_lines):
                     if collect_xray:
                         xray_logs.append({"পৃষ্ঠা": pno + 1, "কলাম": col_i + 1, "Y": round(st_y, 1), "সিদ্ধান্ত": "বাতিল (বৈধ প্রশ্ন নয়)", "লাইন": " ".join(w[4] for l in crop_lines[:1] for w in l)[:70]})
                     continue
@@ -1315,7 +1453,6 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
 def render_learning_suggestions():
-    """একটি স্থির ও মিনিমাল বক্সে একটার পর একটা প্যাটার্ন দেখানোর ক্যারোসেল কার্ড (কনফ্লিক্ট চেকারসহ)।"""
     suggestions = st.session_state.get("rv_suggestions", [])
     if not suggestions:
         return
@@ -1367,7 +1504,6 @@ def render_learning_suggestions():
                 label_visibility="collapsed"
             )
 
-        # যদি এই প্যাটার্নটি অন্য কোনো ক্যাটাগরিতে আগে থেকেই থেকে থাকে তবে সতর্কবার্তা ও ক্যাটাগরি নির্বাচন দেখানো
         sug_conflict = st.session_state.get("rv_sug_conflict")
         if sug_conflict and sug_conflict.get("pattern") == disp_pat:
             st.error(sug_conflict["err_text"])
