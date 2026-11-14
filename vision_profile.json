@@ -1,5 +1,6 @@
 {
-  "_help": "Rhombus (ACS) boi-er jonno vision engine-er setting. Notun boi-te kharap hole sudhu ei file-er man bodlalei hobe, code bodlate hobe na.",
+  "_help": "Rhombus (ACS) ও Udvash উভয় বইয়ের জন্য ভিশন ইঞ্জিনের সেটিংস।",
+  "mode": "auto",
   "read_numbers": "none",
   "label_thr": 0.7,
   "label_frac": 0.25,
@@ -7,8 +8,10 @@
   "num_max_w": 48,
   "pad_top": 6,
   "pad_bot": 4,
-  "min_q_h": 45,
-  "max_q_h": 700,
+  "min_q_h": 40,
+  "max_q_h": 720,
   "header_px": 60,
+  "footer_px": 65,
+  "hanging_indent_min_px": 13,
   "target_page_width_px": 1272
 }
