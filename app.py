@@ -369,16 +369,28 @@ def _b2e_int(s):
     t = s.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).strip()
     return int(t) if t.isdigit() else None
 
+_ENG_PROSE_AFTER_SOL_RE = re.compile(
+    r"^(?:of|in|to|for|is|was|with|that|from|by|at|as|and|or|the|a|an|containing)\b",
+    re.IGNORECASE
+)
+_PAGE_BADGE_STOP_RE = re.compile(
+    r"^(?:P\s*[\-\–]\s*[0-9০-৯]+\s*[\|\।]?\s*Q\s*[\-\–]\s*[0-9০-৯]+|পৃষ্ঠা\s*[0-9০-৯]+\s*[/\/]\s*[0-9০-৯]+)",
+    re.IGNORECASE
+)
+
 def is_solution_text(text):
     if not text:
         return False
     clean = re.sub(r"[\u200c\u200d\ufeff]", "", text).strip()
     if not clean:
         return False
+    # ইংরেজি সাধারণ শব্দ 'solution' বা 'note' যদি কোলন/ডট ছাড়া একাকী থাকে তবে পরের শব্দ না দেখে সিদ্ধান্ত নেওয়া যাবে না
+    if clean.lower() in ("solution", "note", "hint", "hints", "answer"):
+        return False
     if SOL_TOKEN_RE.match(clean):
         return True
     stripped = clean.lstrip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-ⁿ^°*~\"'`)]} ")
-    if not stripped:
+    if not stripped or stripped.lower() in ("solution", "note", "hint", "hints", "answer"):
         return False
     if SOL_TOKEN_RE.match(stripped):
         return True
@@ -386,7 +398,7 @@ def is_solution_text(text):
     head_part = re.split(r"[\:\ঃ\(\[\.\-]", s_low)[0].strip()
     for tag in SOL_TAGS:
         t_low = tag.lower().strip()
-        if not t_low:
+        if not t_low or t_low in ("solution", "note", "hint", "hints", "answer"):
             continue
         if s_low == t_low or s_low.startswith(t_low + ":") or s_low.startswith(t_low + "ঃ") or (head_part and head_part == t_low):
             return True
@@ -398,22 +410,37 @@ def line_has_solution_marker(line, joined_text, max_sol_x):
     if not line:
         return False, None
     wx0, wy0, _, _, t0 = line[0]
+    t1 = line[1][4].strip() if len(line) >= 2 else ""
+
+    # যদি 'solution of blue vitriol' জাতীয় ইংরেজি বাক্য হয়, তবে এটি সমাধানের ট্যাগ নয়
+    if t0.strip("([{. ").lower() in ("solution", "note", "hint", "hints", "answer"):
+        if t1 and _ENG_PROSE_AFTER_SOL_RE.match(t1):
+            return False, None
+        if t0.endswith((":", ".", "-", ")")) or t1.startswith((":", ".", "-")):
+            return True, wy0
+        return False, None
 
     if wx0 <= max_sol_x and is_solution_text(t0):
         return True, wy0
 
     if len(line) >= 2 and wx0 <= max_sol_x:
-        t1 = line[1][4].strip()
         combined_01 = f"{t0}{t1}"
-        if is_solution_text(combined_01) or (re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. ")) and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)):
-            return True, wy0
+        if not _ENG_PROSE_AFTER_SOL_RE.match(t1):
+            if is_solution_text(combined_01) or (
+                re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. "))
+                and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)
+            ):
+                return True, wy0
 
     for idx_w, w in enumerate(line[:6]):
         if w[0] <= max_sol_x:
+            w_nxt = line[idx_w + 1][4].strip() if idx_w + 1 < len(line) else ""
+            if w[4].strip().lower() in ("solution", "note", "hint", "hints", "answer") and _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
+                continue
             if is_solution_text(w[4]):
                 return True, w[1]
-            if idx_w + 1 < len(line):
-                comb = f"{w[4]}{line[idx_w + 1][4]}"
+            if idx_w + 1 < len(line) and not _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
+                comb = f"{w[4]}{w_nxt}"
                 if is_solution_text(comb):
                     return True, w[1]
 
