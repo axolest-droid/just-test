@@ -39,6 +39,12 @@ from learning_engine import (
     KB_FILENAME
 )
 
+# ভিশন ইঞ্জিন (ফটো/স্ক্যান পেজের জন্য) — না পেলে পুরনো ইঞ্জিন চলবে
+try:
+    import vision_bridge
+except Exception:
+    vision_bridge = None
+
 # ১. পেজ কনফিগারেশন
 st.set_page_config(
     page_title="SMART SCANNER",
@@ -113,6 +119,10 @@ with st.sidebar:
         PAGE_RANGE_TEXT = st.text_input("পৃষ্ঠা", "", placeholder="1-5 বা ফাঁকা")
         HEADER_TITLE = st.text_input("শিরোনাম", "MCQ Practice Sheet")
         INVERT_DARK_OUT = st.checkbox("সাদা ব্যাকগ্রাউন্ড", value=False)
+        ENGINE_MODE = st.radio(
+            "ইঞ্জিন", ["ভিশন (ফটো/স্ক্যান)", "পুরনো"], index=0, horizontal=True,
+            help="ভিশন: ফটো বা স্ক্যান করা বইয়ের পেজ (Rhombus)। কিছু না পেলে নিজে থেকেই পুরনো ইঞ্জিনে চলে যায়।"
+        )
 
     with st.expander("মার্জিন ও মাপ", expanded=False):
         QUESTION_GAP_PT = st.slider("গ্যাপ (pt)", 4, 40, 12, step=2)
@@ -966,6 +976,23 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
     xray_logs = []
     total_to_scan = len(page_indices)
 
+    # --- ভিশন ইঞ্জিন (নতুন): সফল হলে এখানেই শেষ, না হলে নিচের পুরনো ইঞ্জিন চলবে ---
+    st.session_state["rv_vision_imgs"] = {}
+    st.session_state["rv_vision_note"] = ""
+    if ENGINE_MODE.startswith("ভিশন") and vision_bridge is not None and total_to_scan > 0:
+        try:
+            def _vprog(i, n):
+                render_progress_card(progress_slot, i, n, page_indices[min(i, n) - 1] + 1, 0, f"ভিশন স্ক্যান {i}/{n}")
+            v_questions, v_imgs, v_note = vision_bridge.extract(src_doc, page_indices, fitz, progress=_vprog)
+            if v_questions:
+                st.session_state["rv_vision_imgs"] = v_imgs
+                st.session_state["rv_vision_note"] = v_note
+                st.session_state["rv_xray_logs"] = []
+                return v_questions
+            st.session_state["rv_vision_note"] = "ভিশন ইঞ্জিন কোনো প্রশ্ন পায়নি — পুরনো ইঞ্জিন ব্যবহার করা হয়েছে।"
+        except Exception as _ve:
+            st.session_state["rv_vision_note"] = f"ভিশন ইঞ্জিনে সমস্যা ({_ve}) — পুরনো ইঞ্জিন ব্যবহার করা হয়েছে।"
+
     for idx, pno in enumerate(page_indices):
         render_progress_card(
             progress_slot, idx, total_to_scan, pno + 1, len(questions),
@@ -1086,7 +1113,18 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
     num_cols = int(COLUMNS_PER_PAGE)
     col_width = (PW - 2 * MARGIN_X - (num_cols - 1) * COL_GAP) / num_cols
 
-    widths = sorted(c.width for _, c in questions)
+    vimgs = st.session_state.get("rv_vision_imgs", {}) or {}
+
+    def _vimg(pno_, clip_):
+        if not vimgs:
+            return None
+        return vimgs.get((int(pno_), round(float(clip_.x0), 1), round(float(clip_.y0), 1), round(float(clip_.x1), 1), round(float(clip_.y1), 1)))
+
+    def _eff_wh(pno_, clip_):
+        v_ = _vimg(pno_, clip_)
+        return (v_[1], v_[2]) if v_ else (clip_.width, clip_.height)
+
+    widths = sorted(_eff_wh(p_, c_)[0] for p_, c_ in questions)
     wide_set = widths[len(widths) // 2] > 1.5 * col_width
     common_scale = None
     if wide_set:
@@ -1114,8 +1152,9 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
         gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, QUESTION_GAP_PT)))
         extra_space = max(0.0, gap_pt - float(QUESTION_GAP_PT))
 
-        scale = common_scale if common_scale else min(col_width / clip.width, 1.35 if num_cols == 2 else 1.65)
-        target_w, target_h = clip.width * scale, clip.height * scale
+        eff_w, eff_h = _eff_wh(pno, clip)
+        scale = common_scale if common_scale else min(col_width / eff_w, 1.35 if num_cols == 2 else 1.65)
+        target_w, target_h = eff_w * scale, eff_h * scale
         needed_h = min(avail_col_h, target_h + extra_space)
 
         if y_cursor + needed_h > PH - MARGIN_BOT and y_cursor > MARGIN_TOP:
@@ -1127,7 +1166,10 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
 
         x_start = MARGIN_X + cur_col * (col_width + COL_GAP)
         target_rect = fitz.Rect(x_start, y_cursor, x_start + target_w, y_cursor + target_h)
-        if INVERT_DARK_OUT and clip_is_dark(src_doc[pno], clip):
+        v_img = _vimg(pno, clip)
+        if v_img is not None:
+            page.insert_image(target_rect, stream=v_img[0])
+        elif INVERT_DARK_OUT and clip_is_dark(src_doc[pno], clip):
             pix = src_doc[pno].get_pixmap(matrix=fitz.Matrix(3, 3), clip=clip, alpha=False)
             pix.invert_irect(pix.irect)
             page.insert_image(target_rect, pixmap=pix)
@@ -1596,6 +1638,8 @@ if uploaded_file is not None:
             selected_pages = parse_page_range(PAGE_RANGE_TEXT, len(src_doc))
             questions = extract_questions_from_pdf(src_doc, selected_pages, progress_slot, collect_xray=XRAY_MODE)
             progress_slot.empty()
+            if st.session_state.get("rv_vision_note"):
+                st.info(st.session_state["rv_vision_note"])
 
             st.session_state["rv_rows"] = questions_to_rows(questions)
             st.session_state["rv_auto_pdf"] = build_practice_pdf(src_doc, questions) if questions else None
