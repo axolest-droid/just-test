@@ -644,7 +644,6 @@ def group_words_into_lines(words):
     cur_line.sort(key=lambda x: x[0])
     lines.append(cur_line)
     return lines
-
 def get_column_lines
 
 # ==============================================================================
