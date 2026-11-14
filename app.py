@@ -369,28 +369,16 @@ def _b2e_int(s):
     t = s.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).strip()
     return int(t) if t.isdigit() else None
 
-_ENG_PROSE_AFTER_SOL_RE = re.compile(
-    r"^(?:of|in|to|for|is|was|with|that|from|by|at|as|and|or|the|a|an|containing)\b",
-    re.IGNORECASE
-)
-_PAGE_BADGE_STOP_RE = re.compile(
-    r"^(?:P\s*[\-\–]\s*[0-9০-৯]+\s*[\|\।]?\s*Q\s*[\-\–]\s*[0-9০-৯]+|পৃষ্ঠা\s*[0-9০-৯]+\s*[/\/]\s*[0-9০-৯]+)",
-    re.IGNORECASE
-)
-
 def is_solution_text(text):
     if not text:
         return False
     clean = re.sub(r"[\u200c\u200d\ufeff]", "", text).strip()
     if not clean:
         return False
-    # ইংরেজি সাধারণ শব্দ 'solution' বা 'note' যদি কোলন/ডট ছাড়া একাকী থাকে তবে পরের শব্দ না দেখে সিদ্ধান্ত নেওয়া যাবে না
-    if clean.lower() in ("solution", "note", "hint", "hints", "answer"):
-        return False
     if SOL_TOKEN_RE.match(clean):
         return True
     stripped = clean.lstrip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-ⁿ^°*~\"'`)]} ")
-    if not stripped or stripped.lower() in ("solution", "note", "hint", "hints", "answer"):
+    if not stripped:
         return False
     if SOL_TOKEN_RE.match(stripped):
         return True
@@ -398,7 +386,7 @@ def is_solution_text(text):
     head_part = re.split(r"[\:\ঃ\(\[\.\-]", s_low)[0].strip()
     for tag in SOL_TAGS:
         t_low = tag.lower().strip()
-        if not t_low or t_low in ("solution", "note", "hint", "hints", "answer"):
+        if not t_low:
             continue
         if s_low == t_low or s_low.startswith(t_low + ":") or s_low.startswith(t_low + "ঃ") or (head_part and head_part == t_low):
             return True
@@ -410,37 +398,22 @@ def line_has_solution_marker(line, joined_text, max_sol_x):
     if not line:
         return False, None
     wx0, wy0, _, _, t0 = line[0]
-    t1 = line[1][4].strip() if len(line) >= 2 else ""
-
-    # যদি 'solution of blue vitriol' জাতীয় ইংরেজি বাক্য হয়, তবে এটি সমাধানের ট্যাগ নয়
-    if t0.strip("([{. ").lower() in ("solution", "note", "hint", "hints", "answer"):
-        if t1 and _ENG_PROSE_AFTER_SOL_RE.match(t1):
-            return False, None
-        if t0.endswith((":", ".", "-", ")")) or t1.startswith((":", ".", "-")):
-            return True, wy0
-        return False, None
 
     if wx0 <= max_sol_x and is_solution_text(t0):
         return True, wy0
 
     if len(line) >= 2 and wx0 <= max_sol_x:
+        t1 = line[1][4].strip()
         combined_01 = f"{t0}{t1}"
-        if not _ENG_PROSE_AFTER_SOL_RE.match(t1):
-            if is_solution_text(combined_01) or (
-                re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. "))
-                and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)
-            ):
-                return True, wy0
+        if is_solution_text(combined_01) or (re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. ")) and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)):
+            return True, wy0
 
     for idx_w, w in enumerate(line[:6]):
         if w[0] <= max_sol_x:
-            w_nxt = line[idx_w + 1][4].strip() if idx_w + 1 < len(line) else ""
-            if w[4].strip().lower() in ("solution", "note", "hint", "hints", "answer") and _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
-                continue
             if is_solution_text(w[4]):
                 return True, w[1]
-            if idx_w + 1 < len(line) and not _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
-                comb = f"{w[4]}{w_nxt}"
+            if idx_w + 1 < len(line):
+                comb = f"{w[4]}{line[idx_w + 1][4]}"
                 if is_solution_text(comb):
                     return True, w[1]
 
@@ -645,7 +618,205 @@ def group_words_into_lines(words):
     lines.append(cur_line)
     return lines
 
-def get_column_lines
+def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn=None):
+    pdf_words = []
+    for wx0, wy0, wx1, wy1, text, *_ in page.get_text("words"):
+        if x0 - 4 <= wx0 < x1 - 4 and 12 < wy0 < H - 18:
+            pdf_words.append((wx0, wy0, wx1, wy1, text.strip()))
+
+    pdf_lines = group_words_into_lines(pdf_words)
+    sol_in_pdf = sum(1 for l in pdf_lines if line_has_solution_marker(l, " ".join(w[4] for w in l), x0 + MAX_SOL_X_OFFSET)[0])
+    q_in_pdf = sum(1 for w in pdf_words if NUM_RE.match(w[4]) or PURE_PREFIX_RE.match(w[4]))
+
+    ocr_words = []
+    ocr_thin_words = []
+    ocr_eng_words = []
+
+    if q_in_pdf < 3 or sol_in_pdf < max(1, q_in_pdf):
+        x0_px, x1_px = max(0, int(x0 * SC)), min(gray_img.shape[1], int(x1 * SC))
+        roi_gray = normalize_shadow_gray(gray_img[:, x0_px:x1_px].copy())
+
+        if is_two_col and div_fn is not None:
+            for r_px in range(roi_gray.shape[0]):
+                d_px = int(div_fn(r_px / SC) * SC) - x0_px
+                if col_i == 1 and 0 <= d_px + 4 < roi_gray.shape[1]:
+                    roi_gray[r_px, :max(0, d_px + 4)] = 255
+                elif col_i == 0 and 0 <= d_px - 4 < roi_gray.shape[1]:
+                    roi_gray[r_px, max(0, d_px - 4):] = 255
+
+        if (not is_two_col or col_i == 1) and roi_gray.shape[1] > int(25 * SC):
+            roi_gray[:, -int(12 * SC):] = 255
+
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(roi_gray)
+        clean_bw = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 14)
+        base_x = x0_px / SC
+
+        ocr_data = pytesseract.image_to_data(
+            clean_bw, lang="eng+ben", config="--psm 6", output_type=pytesseract.Output.DICT
+        )
+        for i in range(len(ocr_data["text"])):
+            txt = ocr_data["text"][i].strip()
+            conf = int(ocr_data["conf"][i]) if str(ocr_data["conf"][i]).lstrip("-").isdigit() else -1
+            if not txt or conf < 16:
+                continue
+            wx0 = base_x + ocr_data["left"][i] / SC
+            wy0 = ocr_data["top"][i] / SC
+            wx1 = wx0 + ocr_data["width"][i] / SC
+            wy1 = wy0 + ocr_data["height"][i] / SC
+            if 12 < wy0 < H - 18:
+                ocr_words.append((wx0, wy0, wx1, wy1, txt))
+
+        thin_bw = cv2.dilate(clean_bw, np.ones((2, 2), np.uint8), iterations=1)
+        ocr_data2 = pytesseract.image_to_data(
+            thin_bw, lang="ben+eng", config="--psm 6", output_type=pytesseract.Output.DICT
+        )
+        for i in range(len(ocr_data2["text"])):
+            txt = ocr_data2["text"][i].strip()
+            conf = int(ocr_data2["conf"][i]) if str(ocr_data2["conf"][i]).lstrip("-").isdigit() else -1
+            if not txt or conf < 16:
+                continue
+            wx0 = base_x + ocr_data2["left"][i] / SC
+            wy0 = ocr_data2["top"][i] / SC
+            wx1 = wx0 + ocr_data2["width"][i] / SC
+            wy1 = wy0 + ocr_data2["height"][i] / SC
+            if 12 < wy0 < H - 18:
+                ocr_thin_words.append((wx0, wy0, wx1, wy1, txt))
+
+        left_strip_w = min(clean_bw.shape[1], int(105 * SC))
+        eng_data = pytesseract.image_to_data(
+            clean_bw[:, :left_strip_w], lang="eng", config="--psm 6", output_type=pytesseract.Output.DICT
+        )
+        for i in range(len(eng_data["text"])):
+            txt = eng_data["text"][i].strip()
+            conf = int(eng_data["conf"][i]) if str(eng_data["conf"][i]).lstrip("-").isdigit() else -1
+            if not txt or conf < 15:
+                continue
+            wx0 = base_x + eng_data["left"][i] / SC
+            wy0 = eng_data["top"][i] / SC
+            wx1 = wx0 + eng_data["width"][i] / SC
+            wy1 = wy0 + eng_data["height"][i] / SC
+            if 12 < wy0 < H - 18:
+                ocr_eng_words.append((wx0, wy0, wx1, wy1, txt))
+
+    return (
+        pdf_lines,
+        group_words_into_lines(ocr_words),
+        group_words_into_lines(ocr_thin_words),
+        group_words_into_lines(ocr_eng_words),
+    )
+
+def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray_log=None, page_no=1, col_no=1):
+    starts, stops = [], []
+    if not lines:
+        return starts, stops
+
+    norm_x0s = [line[0][0] - div_slope * (line[0][1] - H * 0.5) for line in lines if line and len(line[0][4]) >= 2]
+    text_left_x = float(np.percentile(norm_x0s, 15)) if norm_x0s else actual_left_x
+
+    for line in lines:
+        first_w = line[0]
+        wx0, wy0, wx1, wy1, t0 = first_w
+        joined_text = " ".join(w[4] for w in line).strip()
+        if not joined_text:
+            continue
+
+        if HEADER_NOISE_RE.search(joined_text):
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "বাতিল (হেডার নয়েজ)", "লাইন": joined_text[:70]})
+            continue
+
+        local_shift = div_slope * (wy0 - H * 0.5)
+        max_q_x = max(actual_left_x + MAX_Q_X_OFFSET, text_left_x + local_shift + (MAX_Q_X_OFFSET - 10.0))
+        max_sol_x = max(actual_left_x + MAX_SOL_X_OFFSET, text_left_x + local_shift + (MAX_SOL_X_OFFSET - 12.0))
+
+        if BULLET_STOP_RE.match(t0) or BULLET_STOP_RE.match(joined_text):
+            stops.append(wy0 - 1.0)
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (বুলেট চিহ্ন)", "লাইন": joined_text[:70]})
+            continue
+
+        has_sol, sol_y = line_has_solution_marker(line, joined_text, max_sol_x)
+        if has_sol:
+            stops.append((sol_y if sol_y is not None else wy0) - 1.2)
+            if xray_log is not None:
+                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (সমাধান ট্যাগ)", "লাইন": joined_text[:70]})
+            continue
+
+        if ("=" in joined_text or "⇒" in joined_text or "∴" in joined_text) and "?" not in joined_text:
+            if not EQ_GUARD_KW_RE.search(joined_text):
+                stops.append(wy0 - 1.0)
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (সমীকরণ লাইন)", "লাইন": joined_text[:70]})
+                continue
+
+        if OPT_TOKEN_RE.match(t0):
+            continue
+
+        cand_indices = [0]
+        if len(line) > 1 and len(t0) <= 2 and re.match(r"^[\|\!\.\,\;\:\'\"\`\-\—\_\/\\]+$", t0):
+            cand_indices.append(1)
+
+        for idx_c in cand_indices:
+            cw = line[idx_c]
+            c_wx0, c_wy0, c_wx1, c_wy1, c_t0 = cw
+            if c_wx0 > max_q_x:
+                continue
+
+            is_num_q = bool(NUM_RE.match(c_t0) or PURE_PREFIX_RE.match(c_t0))
+            is_dotless_q = False
+            if not is_num_q and re.match(r"^[0-9০-৯]{1,2}$", c_t0):
+                if "?" in joined_text or DOTLESS_KW_RE.search(joined_text):
+                    is_dotless_q = True
+
+            if is_num_q or is_dotless_q:
+                if re.match(r"^[0-9০-৯]+\.[0-9০-৯]+", c_t0):
+                    continue
+                m_num = NUM_RE.match(c_t0)
+                qn = _b2e_int(m_num.group(1)) if (m_num and m_num.group(1)) else (_b2e_int(c_t0) if is_dotless_q else None)
+                if qn is not None and (qn == 0 or qn > MAX_Q_NUMBER):
+                    continue
+
+                rest_text = " ".join(w[4] for w in line[idx_c + 1:]).strip()
+                if not rest_text:
+                    continue
+
+                if ("=" in rest_text or "⇒" in rest_text or "∴" in rest_text) and "?" not in rest_text:
+                    if not EQ_GUARD_KW_RE.search(rest_text):
+                        continue
+
+                has_q_words = bool(re.search(r"[অ-ঔক-হ]{2,}|[a-zA-Z]{3,}|\?", rest_text))
+                if not has_q_words and len(line) > idx_c + 1:
+                    nxt_w = line[idx_c + 1]
+                    if OPT_UNIT_RE.match(nxt_w[4]) or (nxt_w[0] - c_wx1 < 3.5 and re.match(r"^[0-9০-৯]", nxt_w[4])):
+                        continue
+                starts.append(c_wy0 - 1.5)
+                if xray_log is not None:
+                    xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(c_wy0, 1), "সিদ্ধান্ত": "শুরু (প্রশ্ন শনাক্ত)", "লাইন": joined_text[:70]})
+                break
+
+    return starts, stops
+
+def is_valid_question_crop(lines_in_crop):
+    if not lines_in_crop:
+        return True
+    full_txt = " ".join(" ".join(w[4] for w in l) for l in lines_in_crop).strip()
+    if not full_txt:
+        return False
+
+    first_line = " ".join(w[4] for w in lines_in_crop[0]).strip()
+    if re.match(r"^(?:[\=\⇒\∴\∵]|\.\.\s*[0-9০-৯]|V_)", first_line) or is_solution_text(first_line):
+        return False
+
+    has_q_mark = "?" in full_txt
+    has_options = bool(re.search(r"(?:[\(\[]?[ক-ঘa-dA-D][\)\]\.]|[ⓐⓑⓒⓓ])", full_txt))
+    has_q_words = bool(VALID_CROP_KW_RE.search(full_txt))
+    eq_count = full_txt.count("=") + full_txt.count("⇒")
+
+    if eq_count >= 1 and not has_q_mark and not has_options and not has_q_words:
+        return False
+    if eq_count >= 2 and not has_q_mark and not has_options:
+        return False
+    return True
 
 # ==============================================================================
 # ৮. স্লাইড মোড: বক্সে ঘেরা প্রশ্ন শনাক্ত, Sol^n ও ফাঁকা জায়গা ছাঁটাই
