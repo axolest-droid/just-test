@@ -15,7 +15,9 @@
     "▪",
     "■",
     "□",
+    "|",
     "Q::",
+    "বিগত",
     "Question"
   ],
   "solution_tags": [
@@ -119,7 +121,6 @@
     "g",
     "kg",
     "mL",
-    "ml",
     "cm",
     "mm",
     "m",
@@ -135,9 +136,25 @@
   "dotless_question_keywords": [
     "কত",
     "কোনটি",
-    "কোনটির",
-    "নির্ণয়",
-    "নির্ণয়"
+    "হচ্ছে",
+    "থাকে",
+    "থাকবে",
+    "রয়েছে",
+    "রয়েছে",
+    "আছে",
+    "ওজন",
+    "ভর",
+    "সংখ্যা",
+    "আয়তন",
+    "আয়তন",
+    "মোল",
+    "লিটার",
+    "গ্রাম",
+    "গ্যাস",
+    "পরমাণু",
+    "অণু",
+    "STP",
+    "NTP"
   ],
   "valid_crop_keywords": [
     "কত",
@@ -165,8 +182,6 @@
     "বিক্রিয়া",
     "বিক্রিয়া",
     "লেখচিত্র",
-    "সঠিক",
-    "নিচের",
     "what",
     "which",
     "find",
@@ -187,14 +202,14 @@
   "layout_thresholds": {
     "max_question_number": 160,
     "min_start_gap_pt": 16.0,
-    "max_q_x_offset": 26.0,
+    "max_q_x_offset": 52.0,
     "max_sol_x_offset": 120.0,
     "max_internal_blank_gap_pt": 24.0
   },
   "_ai_instructions": {
     "purpose": "Central Knowledge Base & Rule Engine for SMART SCANNER PDF Question Extractor.",
-    "how_to_fix_missed_questions": "If a PDF uses a new prefix before question numbers (e.g., 'অনুশীলনী', 'Test'), add it to 'question_tags'.",
+    "how_to_fix_missed_questions": "If a PDF uses a new prefix before question numbers (e.g., 'অনুশীলনী', 'Test'), add it to 'question_tags'. If questions have no dot/bracket after numbers and are missed, add common words from those questions to 'dotless_question_keywords'.",
     "how_to_fix_uncut_solutions": "If a solution or explanation is included inside a question box, add the starting word/marker of that solution to 'solution_tags' or its symbol to 'bullet_stop_chars'.",
-    "how_to_fix_false_positive_boxes": "If page headers, watermarks, or coaching names are falsely cropped as questions, add the text/regex to 'header_noise_patterns'."
+    "how_to_fix_false_positive_boxes": "If page headers, watermarks, or coaching names are falsely cropped as questions, add the text/regex to 'header_noise_patterns'. If math steps are cropped as questions, check 'valid_crop_keywords'."
   }
 }

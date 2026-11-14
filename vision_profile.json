@@ -1,0 +1,14 @@
+{
+  "_help": "Rhombus (ACS) boi-er jonno vision engine-er setting. Notun boi-te kharap hole sudhu ei file-er man bodlalei hobe, code bodlate hobe na.",
+  "read_numbers": "none",
+  "label_thr": 0.7,
+  "label_frac": 0.25,
+  "margin_tol": 12,
+  "num_max_w": 48,
+  "pad_top": 6,
+  "pad_bot": 4,
+  "min_q_h": 45,
+  "max_q_h": 700,
+  "header_px": 60,
+  "target_page_width_px": 1272
+}
