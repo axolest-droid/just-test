@@ -35,6 +35,7 @@ from learning_engine import (
     find_all_tag_conflicts,
     resolve_tag_conflicts,
     sync_all_kb_files,
+    _extract_lines_from_clip,
     CATEGORY_LABELS_BN,
     KB_FILENAME
 )
@@ -1297,6 +1298,65 @@ def prepare_pages_payload_for_canvas(raw_pdf, page_indices):
     doc.close()
     return pages_data
 
+def _normalize_prefix(s):
+    return re.sub(r"[\.\:\-ঃ\/\|\(\[\s]+", "", s or "").lower()
+
+def _match_kb_tag(prefix):
+    p = _normalize_prefix(prefix)
+    if not p:
+        return ""
+    best = ""
+    for t in Q_TAGS:
+        tn = _normalize_prefix(t)
+        if tn and (p == tn or p.startswith(tn)) and len(t) > len(best):
+            best = t
+    return best
+
+def classify_first_line(line0):
+    toks = line0.split()
+    if not toks:
+        return "", "unknown"
+    t0 = toks[0]
+    if len(t0) <= 2 and re.match(r"^[\|\!\.\,\;\:\'\"\`\-\—\_\/\\]+$", t0) and len(toks) > 1:
+        t0 = toks[1]
+
+    m = NUM_RE.match(t0)
+    if m:
+        prefix = re.split(r"[0-9০-৯]", t0, maxsplit=1)[0]
+        prefix = re.sub(r"^[\(\[]", "", prefix)
+        if _normalize_prefix(prefix):
+            return (_match_kb_tag(prefix) or prefix.strip(".:-ঃ/|")), "prefix"
+        return "", "number"
+    if PURE_PREFIX_RE.match(t0):
+        return (_match_kb_tag(t0) or re.sub(r"[0-9০-৯\.\:\-ঃ\/\|]+", "", t0)), "prefix"
+    if re.match(r"^[0-9০-৯]{1,2}$", t0):
+        km = DOTLESS_KW_RE.search(line0)
+        return (km.group(0) if km else ""), "dotless"
+    return "", "unknown"
+
+def detect_box_tags(raw_pdf, boxes):
+    cache = st.session_state.setdefault("rv_tag_cache", {})
+    doc = fitz.open(stream=raw_pdf, filetype="pdf")
+    for b in boxes:
+        key = (b.get("page"), b.get("x0"), b.get("y0"), b.get("x1"), b.get("y1"))
+        if key not in cache:
+            tag, kind, line0 = "", "unknown", ""
+            try:
+                pno = int(b["page"]) - 1
+                if 0 <= pno < len(doc):
+                    page = doc[pno]
+                    clip = fitz.Rect(b["x0"], b["y0"], b["x1"], b["y0"] + 22) & page.rect
+                    lines = _extract_lines_from_clip(page, clip)
+                    if lines:
+                        line0 = lines[0][:90]
+                        tag, kind = classify_first_line(line0)
+            except Exception:
+                pass
+            cache[key] = (tag, kind, line0)
+        b["tag"], b["tag_kind"], b["tag_line"] = cache[key]
+    doc.close()
+    return boxes
+
 def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_file="canvas_editor.html"):
     pages_json = json.dumps(pages_data)
     boxes_json = json.dumps(initial_boxes)
@@ -1538,6 +1598,7 @@ def render_results_and_review(raw_pdf, file_key):
         selected_indices = st.session_state.get("rv_page_indices", [0])
         pages_payload = prepare_pages_payload_for_canvas(raw_pdf, selected_indices)
         initial_boxes = rows_df.to_dict(orient="records") if not rows_df.empty else []
+        initial_boxes = detect_box_tags(raw_pdf, initial_boxes)
 
         if components is not None:
             canvas_html = build_interactive_canvas_html(pages_payload, initial_boxes, file_key)

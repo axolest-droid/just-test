@@ -445,6 +445,51 @@
     min-width: 34px;
     text-align: right;
   }
+  /* ===== ট্যাগ ইনফো পপ-আপ ===== */
+  .tag-pop {
+    position: fixed;
+    z-index: 9999;
+    width: 236px;
+    padding: 12px 13px 11px;
+    background: rgba(24, 31, 44, 0.94);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    transform: translateY(6px) scale(0.94);
+    transform-origin: top left;
+    transition: opacity .16s ease, transform .2s cubic-bezier(.2,.9,.3,1.2);
+    pointer-events: auto;
+    user-select: none;
+  }
+  .tag-pop.show { opacity: 1; transform: translateY(0) scale(1); }
+  .tag-pop.hide { opacity: 0; transform: translateY(3px) scale(0.96); transition-duration: .12s; }
+  .tag-pop-head {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 600; letter-spacing: .04em;
+    color: rgba(230, 237, 243, 0.5); margin-bottom: 8px;
+  }
+  .tag-pop-dot { width: 6px; height: 6px; border-radius: 50%; background: #5E9E8B; box-shadow: 0 0 0 3px rgba(94,158,139,.18); }
+  .tag-pop-chip {
+    display: inline-block; max-width: 100%;
+    font-family: 'JetBrains Mono', 'Hind Siliguri', monospace;
+    font-size: 15px; font-weight: 600; color: #8FD0BB;
+    background: rgba(94, 158, 139, 0.13);
+    border: 1px solid rgba(94, 158, 139, 0.3);
+    padding: 3px 10px; border-radius: 7px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tag-pop-chip.muted { color: rgba(230,237,243,.7); background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); }
+  .tag-pop-desc { margin-top: 7px; font-size: 11.5px; line-height: 1.45; color: rgba(230, 237, 243, 0.72); }
+  .tag-pop-line {
+    margin-top: 8px; padding-top: 7px; border-top: 1px dashed rgba(255,255,255,.09);
+    font-size: 10.5px; color: rgba(230,237,243,.42);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tag-pop-warn { margin-top: 6px; font-size: 10.5px; color: #E0B25C; }
+  @media (prefers-reduced-motion: reduce) { .tag-pop, .tag-pop.hide { transition: opacity .01s; transform: none; } }
 </style>
 </head>
 <body>
@@ -693,6 +738,7 @@ if (!PAGES || PAGES.length === 0) {
   let zoomLevel = 1.0;
   let nextId = 1;
   boxes.forEach(b => {
+    b._ox = b.x0; b._oy = b.y0;
     b._id = nextId++;
     b.keep = (b.keep !== false);
     b.w_gap = Boolean(b.w_gap);
@@ -946,6 +992,7 @@ if (!PAGES || PAGES.length === 0) {
   }
 
   function showPage(idx) {
+    closeTagPop(true);
     if (idx < 0 || idx >= PAGES.length) return;
     curPageIdx = idx;
     try { sessionStorage.setItem(STORAGE_PAGE_KEY, String(curPageIdx)); } catch (e) {}
@@ -1169,9 +1216,101 @@ if (!PAGES || PAGES.length === 0) {
   overlay.addEventListener('pointerup', endPointerDrag);
   overlay.addEventListener('pointercancel', endPointerDrag);
 
+  /* ===== ট্যাগ ইনফো পপ-আপ ===== */
+  var tagPopEl = null;
+
+  function closeTagPop(instant) {
+    if (!tagPopEl) return;
+    const el = tagPopEl;
+    tagPopEl = null;
+    if (instant) { el.remove(); return; }
+    el.classList.remove('show');
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 150);
+  }
+
+  function tagDescribe(b) {
+    if (b.tag_kind === 'prefix' && b.tag)
+      return { chip: b.tag, muted: false, desc: 'এই প্রশ্ন-ট্যাগ দেখে বক্সটি সিলেক্ট হয়েছে।' };
+    if (b.tag_kind === 'number')
+      return { chip: 'শুধু নম্বর', muted: false, desc: 'কোনো প্রিফিক্স নেই; প্রশ্ন-নম্বর (যেমন 5.) দেখে শনাক্ত হয়েছে।' };
+    if (b.tag_kind === 'dotless')
+      return { chip: b.tag ? ('কীওয়ার্ড: ' + b.tag) : 'ডটহীন নম্বর', muted: false,
+               desc: 'নম্বরের পর ডট ছিল না; প্রশ্নের কীওয়ার্ড দেখে শনাক্ত হয়েছে।' };
+    if (b.tag === undefined)
+      return { chip: 'ম্যানুয়াল বক্স', muted: true, desc: 'এই বক্সটি আপনি নিজে আঁকা বা ডুপ্লিকেট করেছেন।' };
+    return { chip: 'অজানা', muted: true, desc: 'নির্দিষ্ট ট্যাগ পাওয়া যায়নি (স্লাইড বক্স বা হাতে এডিট করা হতে পারে)।' };
+  }
+
+  function showTagPop() {
+    const p = curPageObj();
+    if (!p) return;
+    const ids = Array.from(selectedIds);
+    let b = null;
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const cand = boxes.find(x => x._id === ids[i] && x.page === p.page && x.keep !== false);
+      if (cand) { b = cand; break; }
+    }
+    if (!b) return;
+
+    closeTagPop(true);
+    sortBoxes();
+    const qNum = boxes.filter(x => x.keep !== false).indexOf(b) + 1;
+    const info = tagDescribe(b);
+    const moved = (b._oy !== undefined) && (Math.abs(b.y0 - b._oy) > 3 || Math.abs(b.x0 - b._ox) > 3);
+
+    const pop = document.createElement('div');
+    pop.className = 'tag-pop';
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    pop.innerHTML =
+      '<div class="tag-pop-head"><span class="tag-pop-dot"></span>বক্স #' + qNum + ' • পৃষ্ঠা ' + b.page + '</div>' +
+      '<div class="tag-pop-chip' + (info.muted ? ' muted' : '') + '">' + esc(info.chip) + '</div>' +
+      '<div class="tag-pop-desc">' + esc(info.desc) + '</div>' +
+      (b.tag_line ? '<div class="tag-pop-line">' + esc(b.tag_line) + '</div>' : '') +
+      (moved ? '<div class="tag-pop-warn">বক্স সরানো হয়েছে, ট্যাগ আগের অবস্থান থেকে।</div>' : '');
+    document.body.appendChild(pop);
+
+    const boxEl = overlay.querySelector('.qbox[data-id="' + b._id + '"]');
+    const r = boxEl ? boxEl.getBoundingClientRect() : { left: 20, top: 80, right: 120, bottom: 120 };
+    const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = r.left + 8;
+    let top = r.top - ph - 8;
+    if (top < 8) top = Math.min(r.bottom + 8, window.innerHeight - ph - 8);
+    left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+    top = Math.max(8, top);
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+
+    tagPopEl = pop;
+    requestAnimationFrame(() => requestAnimationFrame(() => pop.classList.add('show')));
+  }
+
+  /* পপ-আপের বাইরে ক্লিক করলে মিলিয়ে যাবে */
+  document.addEventListener('pointerdown', (e) => {
+    if (tagPopEl && !tagPopEl.contains(e.target)) closeTagPop();
+  }, true);
+  try {
+    if (window.parent && window.parent.document) {
+      if (window.parent._psTagPopClose) {
+        window.parent.document.removeEventListener('pointerdown', window.parent._psTagPopClose, true);
+      }
+      window.parent._psTagPopClose = () => closeTagPop();
+      window.parent.document.addEventListener('pointerdown', window.parent._psTagPopClose, true);
+    }
+  } catch (err) {}
+  viewport.addEventListener('scroll', () => closeTagPop(true), { passive: true });
+
   function handleKeyNavigation(e) {
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) {
+      return;
+    }
+
+    /* i চাপলে সিলেক্ট করা বক্সের ট্যাগ-পপআপ; Esc চাপলে বন্ধ */
+    if (e.key === 'Escape' && tagPopEl) { closeTagPop(); return; }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'i' || e.key === 'I' || e.code === 'KeyI')) {
+      if (tagPopEl) closeTagPop(); else showTagPop();
+      e.preventDefault();
       return;
     }
 
