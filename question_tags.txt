@@ -19,4 +19,3 @@ Q::
 বিগত
 Question
 T-
-T
