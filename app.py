@@ -39,12 +39,6 @@ from learning_engine import (
     KB_FILENAME
 )
 
-# ভিশন ইঞ্জিন (ফটো/স্ক্যান পেজের জন্য) — না পেলে পুরনো ইঞ্জিন চলবে
-try:
-    import vision_bridge
-except Exception:
-    vision_bridge = None
-
 # ১. পেজ কনফিগারেশন
 st.set_page_config(
     page_title="SMART SCANNER",
@@ -119,10 +113,6 @@ with st.sidebar:
         PAGE_RANGE_TEXT = st.text_input("পৃষ্ঠা", "", placeholder="1-5 বা ফাঁকা")
         HEADER_TITLE = st.text_input("শিরোনাম", "MCQ Practice Sheet")
         INVERT_DARK_OUT = st.checkbox("সাদা ব্যাকগ্রাউন্ড", value=False)
-        ENGINE_MODE = st.radio(
-            "ইঞ্জিন", ["ভিশন (ফটো/স্ক্যান)", "পুরনো"], index=0, horizontal=True,
-            help="ভিশন: ফটো বা স্ক্যান করা বইয়ের পেজ (Rhombus)। কিছু না পেলে নিজে থেকেই পুরনো ইঞ্জিনে চলে যায়।"
-        )
 
     with st.expander("মার্জিন ও মাপ", expanded=False):
         QUESTION_GAP_PT = st.slider("গ্যাপ (pt)", 4, 40, 12, step=2)
@@ -369,28 +359,16 @@ def _b2e_int(s):
     t = s.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).strip()
     return int(t) if t.isdigit() else None
 
-_ENG_PROSE_AFTER_SOL_RE = re.compile(
-    r"^(?:of|in|to|for|is|was|with|that|from|by|at|as|and|or|the|a|an|containing)\b",
-    re.IGNORECASE
-)
-_PAGE_BADGE_STOP_RE = re.compile(
-    r"^(?:P\s*[\-\–]\s*[0-9০-৯]+\s*[\|\।]?\s*Q\s*[\-\–]\s*[0-9০-৯]+|পৃষ্ঠা\s*[0-9০-৯]+\s*[/\/]\s*[0-9০-৯]+)",
-    re.IGNORECASE
-)
-
 def is_solution_text(text):
     if not text:
         return False
     clean = re.sub(r"[\u200c\u200d\ufeff]", "", text).strip()
     if not clean:
         return False
-    # ইংরেজি সাধারণ শব্দ 'solution' বা 'note' যদি কোলন/ডট ছাড়া একাকী থাকে তবে পরের শব্দ না দেখে সিদ্ধান্ত নেওয়া যাবে না
-    if clean.lower() in ("solution", "note", "hint", "hints", "answer"):
-        return False
     if SOL_TOKEN_RE.match(clean):
         return True
     stripped = clean.lstrip("([{•*-➢➤.@©\"'` ").rstrip(".:;ঃ-ⁿ^°*~\"'`)]} ")
-    if not stripped or stripped.lower() in ("solution", "note", "hint", "hints", "answer"):
+    if not stripped:
         return False
     if SOL_TOKEN_RE.match(stripped):
         return True
@@ -398,7 +376,7 @@ def is_solution_text(text):
     head_part = re.split(r"[\:\ঃ\(\[\.\-]", s_low)[0].strip()
     for tag in SOL_TAGS:
         t_low = tag.lower().strip()
-        if not t_low or t_low in ("solution", "note", "hint", "hints", "answer"):
+        if not t_low:
             continue
         if s_low == t_low or s_low.startswith(t_low + ":") or s_low.startswith(t_low + "ঃ") or (head_part and head_part == t_low):
             return True
@@ -410,37 +388,22 @@ def line_has_solution_marker(line, joined_text, max_sol_x):
     if not line:
         return False, None
     wx0, wy0, _, _, t0 = line[0]
-    t1 = line[1][4].strip() if len(line) >= 2 else ""
-
-    # যদি 'solution of blue vitriol' জাতীয় ইংরেজি বাক্য হয়, তবে এটি সমাধানের ট্যাগ নয়
-    if t0.strip("([{. ").lower() in ("solution", "note", "hint", "hints", "answer"):
-        if t1 and _ENG_PROSE_AFTER_SOL_RE.match(t1):
-            return False, None
-        if t0.endswith((":", ".", "-", ")")) or t1.startswith((":", ".", "-")):
-            return True, wy0
-        return False, None
 
     if wx0 <= max_sol_x and is_solution_text(t0):
         return True, wy0
 
     if len(line) >= 2 and wx0 <= max_sol_x:
+        t1 = line[1][4].strip()
         combined_01 = f"{t0}{t1}"
-        if not _ENG_PROSE_AFTER_SOL_RE.match(t1):
-            if is_solution_text(combined_01) or (
-                re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. "))
-                and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)
-            ):
-                return True, wy0
+        if is_solution_text(combined_01) or (re.match(r"^[sS58\$][oO0aAeE][lL1Ii\|!t]$", t0.strip("([. ")) and re.match(r"^[nNmMrR23\^\°\*\ⁿ\:\.\-]+$", t1)):
+            return True, wy0
 
     for idx_w, w in enumerate(line[:6]):
         if w[0] <= max_sol_x:
-            w_nxt = line[idx_w + 1][4].strip() if idx_w + 1 < len(line) else ""
-            if w[4].strip().lower() in ("solution", "note", "hint", "hints", "answer") and _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
-                continue
             if is_solution_text(w[4]):
                 return True, w[1]
-            if idx_w + 1 < len(line) and not _ENG_PROSE_AFTER_SOL_RE.match(w_nxt):
-                comb = f"{w[4]}{w_nxt}"
+            if idx_w + 1 < len(line):
+                comb = f"{w[4]}{line[idx_w + 1][4]}"
                 if is_solution_text(comb):
                     return True, w[1]
 
@@ -652,10 +615,6 @@ def get_column_lines(page, gray_img, x0, x1, H, col_i=0, is_two_col=True, div_fn
             pdf_words.append((wx0, wy0, wx1, wy1, text.strip()))
 
     pdf_lines = group_words_into_lines(pdf_words)
-    # যদি পেজে পরিষ্কার ডিজিটাল টেক্সট লেয়ার থাকে (যেমন s5.pdf), তবে অযথা ইংরেজি OCR চালিয়ে (খ)-কে (4) বানানো বন্ধ রাখা
-    if len(pdf_words) >= 35:
-        return pdf_lines, [], [], []
-
     sol_in_pdf = sum(1 for l in pdf_lines if line_has_solution_marker(l, " ".join(w[4] for w in l), x0 + MAX_SOL_X_OFFSET)[0])
     q_in_pdf = sum(1 for w in pdf_words if NUM_RE.match(w[4]) or PURE_PREFIX_RE.match(w[4]))
 
@@ -751,13 +710,6 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
         if not joined_text:
             continue
 
-        # s5.pdf-এর 'P-6 | Q-11' ব্যাজ এবং 'পৃষ্ঠা ৬/৩০' ফুটারকে স্টপ ব্যারিয়ার হিসেবে ধরা যাতে আগের প্রশ্নের ভেতরে না ঢোকে
-        if _PAGE_BADGE_STOP_RE.search(joined_text):
-            stops.append(wy0 - 2.0)
-            if xray_log is not None:
-                xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (পেজ ব্যাজ/ফুটার)", "লাইন": joined_text[:70]})
-            continue
-
         if HEADER_NOISE_RE.search(joined_text):
             if xray_log is not None:
                 xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "বাতিল (হেডার নয়েজ)", "লাইন": joined_text[:70]})
@@ -780,8 +732,7 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
                 xray_log.append({"পৃষ্ঠা": page_no, "কলাম": col_no, "Y": round(wy0, 1), "সিদ্ধান্ত": "থামো (সমাধান ট্যাগ)", "লাইন": joined_text[:70]})
             continue
 
-        # শুধুমাত্র তখনই সমীকরণ লাইনে থামবে যখন লাইনটি নিজে কোনো প্রশ্ন নম্বর দিয়ে শুরু নয় এবং শুরুতেই '=' বা '⇒' বা '∴' থাকে
-        if re.match(r"^[\=\⇒\∴\∵]", joined_text) and "?" not in joined_text:
+        if ("=" in joined_text or "⇒" in joined_text or "∴" in joined_text) and "?" not in joined_text:
             if not EQ_GUARD_KW_RE.search(joined_text):
                 stops.append(wy0 - 1.0)
                 if xray_log is not None:
@@ -801,10 +752,6 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
             if c_wx0 > max_q_x:
                 continue
 
-            # 'P-6' বা 'Q-11' ব্যাজ যেন প্রশ্ন শুরু না হয়
-            if re.match(r"^[PQpq]\s*[\-\–]\s*[0-9০-৯]+$", c_t0):
-                continue
-
             is_num_q = bool(NUM_RE.match(c_t0) or PURE_PREFIX_RE.match(c_t0))
             is_dotless_q = False
             if not is_num_q and re.match(r"^[0-9০-৯]{1,2}$", c_t0):
@@ -822,6 +769,10 @@ def analyze_lines_for_markers(lines, actual_left_x, div_slope=0.0, H=842.0, xray
                 rest_text = " ".join(w[4] for w in line[idx_c + 1:]).strip()
                 if not rest_text:
                     continue
+
+                if ("=" in rest_text or "⇒" in rest_text or "∴" in rest_text) and "?" not in rest_text:
+                    if not EQ_GUARD_KW_RE.search(rest_text):
+                        continue
 
                 has_q_words = bool(re.search(r"[অ-ঔক-হ]{2,}|[a-zA-Z]{3,}|\?", rest_text))
                 if not has_q_words and len(line) > idx_c + 1:
@@ -846,11 +797,6 @@ def is_valid_question_crop(lines_in_crop):
     if re.match(r"^(?:[\=\⇒\∴\∵]|\.\.\s*[0-9০-৯]|V_)", first_line) or is_solution_text(first_line):
         return False
 
-    # প্রথম লাইনে যদি বৈধ প্রশ্ন নম্বর থাকে এবং ভেতরে বাংলা/ইংরেজি বাক্যের শব্দ থাকে, তবে সমীকরণ থাকলেও সেটি বৈধ প্রশ্ন (যেমন s5 Q11, Q12, Q25)
-    first_tok = lines_in_crop[0][0][4].strip() if lines_in_crop[0] else ""
-    if NUM_RE.match(first_tok) and len(re.findall(r"[অ-ঔক-হ]{3,}|[a-zA-Z]{4,}", full_txt)) >= 4:
-        return True
-
     has_q_mark = "?" in full_txt
     has_options = bool(re.search(r"(?:[\(\[]?[ক-ঘa-dA-D][\)\]\.]|[ⓐⓑⓒⓓ])", full_txt))
     has_q_words = bool(VALID_CROP_KW_RE.search(full_txt))
@@ -858,7 +804,7 @@ def is_valid_question_crop(lines_in_crop):
 
     if eq_count >= 1 and not has_q_mark and not has_options and not has_q_words:
         return False
-    if eq_count >= 2 and not has_q_mark and not has_options and not has_q_words:
+    if eq_count >= 2 and not has_q_mark and not has_options:
         return False
     return True
 
@@ -1020,23 +966,6 @@ def extract_questions_from_pdf(src_doc, page_indices, progress_slot, collect_xra
     xray_logs = []
     total_to_scan = len(page_indices)
 
-    # --- ভিশন ইঞ্জিন (নতুন): সফল হলে এখানেই শেষ, না হলে নিচের পুরনো ইঞ্জিন চলবে ---
-    st.session_state["rv_vision_imgs"] = {}
-    st.session_state["rv_vision_note"] = ""
-    if ENGINE_MODE.startswith("ভিশন") and vision_bridge is not None and total_to_scan > 0:
-        try:
-            def _vprog(i, n):
-                render_progress_card(progress_slot, i, n, page_indices[min(i, n) - 1] + 1, 0, f"ভিশন স্ক্যান {i}/{n}")
-            v_questions, v_imgs, v_note = vision_bridge.extract(src_doc, page_indices, fitz, progress=_vprog)
-            if v_questions:
-                st.session_state["rv_vision_imgs"] = v_imgs
-                st.session_state["rv_vision_note"] = v_note
-                st.session_state["rv_xray_logs"] = []
-                return v_questions
-            st.session_state["rv_vision_note"] = "ভিশন ইঞ্জিন কোনো প্রশ্ন পায়নি — পুরনো ইঞ্জিন ব্যবহার করা হয়েছে।"
-        except Exception as _ve:
-            st.session_state["rv_vision_note"] = f"ভিশন ইঞ্জিনে সমস্যা ({_ve}) — পুরনো ইঞ্জিন ব্যবহার করা হয়েছে।"
-
     for idx, pno in enumerate(page_indices):
         render_progress_card(
             progress_slot, idx, total_to_scan, pno + 1, len(questions),
@@ -1157,18 +1086,7 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
     num_cols = int(COLUMNS_PER_PAGE)
     col_width = (PW - 2 * MARGIN_X - (num_cols - 1) * COL_GAP) / num_cols
 
-    vimgs = st.session_state.get("rv_vision_imgs", {}) or {}
-
-    def _vimg(pno_, clip_):
-        if not vimgs:
-            return None
-        return vimgs.get((int(pno_), round(float(clip_.x0), 1), round(float(clip_.y0), 1), round(float(clip_.x1), 1), round(float(clip_.y1), 1)))
-
-    def _eff_wh(pno_, clip_):
-        v_ = _vimg(pno_, clip_)
-        return (v_[1], v_[2]) if v_ else (clip_.width, clip_.height)
-
-    widths = sorted(_eff_wh(p_, c_)[0] for p_, c_ in questions)
+    widths = sorted(c.width for _, c in questions)
     wide_set = widths[len(widths) // 2] > 1.5 * col_width
     common_scale = None
     if wide_set:
@@ -1196,9 +1114,8 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
         gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, QUESTION_GAP_PT)))
         extra_space = max(0.0, gap_pt - float(QUESTION_GAP_PT))
 
-        eff_w, eff_h = _eff_wh(pno, clip)
-        scale = common_scale if common_scale else min(col_width / eff_w, 1.35 if num_cols == 2 else 1.65)
-        target_w, target_h = eff_w * scale, eff_h * scale
+        scale = common_scale if common_scale else min(col_width / clip.width, 1.35 if num_cols == 2 else 1.65)
+        target_w, target_h = clip.width * scale, clip.height * scale
         needed_h = min(avail_col_h, target_h + extra_space)
 
         if y_cursor + needed_h > PH - MARGIN_BOT and y_cursor > MARGIN_TOP:
@@ -1210,10 +1127,7 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
 
         x_start = MARGIN_X + cur_col * (col_width + COL_GAP)
         target_rect = fitz.Rect(x_start, y_cursor, x_start + target_w, y_cursor + target_h)
-        v_img = _vimg(pno, clip)
-        if v_img is not None:
-            page.insert_image(target_rect, stream=v_img[0])
-        elif INVERT_DARK_OUT and clip_is_dark(src_doc[pno], clip):
+        if INVERT_DARK_OUT and clip_is_dark(src_doc[pno], clip):
             pix = src_doc[pno].get_pixmap(matrix=fitz.Matrix(3, 3), clip=clip, alpha=False)
             pix.invert_irect(pix.irect)
             page.insert_image(target_rect, pixmap=pix)
@@ -1682,8 +1596,6 @@ if uploaded_file is not None:
             selected_pages = parse_page_range(PAGE_RANGE_TEXT, len(src_doc))
             questions = extract_questions_from_pdf(src_doc, selected_pages, progress_slot, collect_xray=XRAY_MODE)
             progress_slot.empty()
-            if st.session_state.get("rv_vision_note"):
-                st.info(st.session_state["rv_vision_note"])
 
             st.session_state["rv_rows"] = questions_to_rows(questions)
             st.session_state["rv_auto_pdf"] = build_practice_pdf(src_doc, questions) if questions else None
