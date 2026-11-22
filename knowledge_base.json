@@ -15,7 +15,6 @@
     "▪",
     "■",
     "□",
-    "|",
     "Q::",
     "বিগত",
     "Question",
@@ -92,7 +91,8 @@
     "য্যাখ্যা",
     "ব্যাখ",
     "Sol™",
-    "Sols"
+    "Sols",
+    "|"
   ],
   "header_noise_patterns": [
     "Educationalpdf",
