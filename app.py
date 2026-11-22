@@ -1110,10 +1110,9 @@ def build_practice_pdf(src_doc, questions, custom_gaps=None):
     cur_col, y_cursor = 0, MARGIN_TOP
     avail_col_h = PH - MARGIN_TOP - MARGIN_BOT
 
-    mcq_gap_pt = float(st.session_state.get("rv_mcq_gap_pt", QUESTION_GAP_PT))
     for q_idx, (pno, clip) in enumerate(questions):
         q_key = str(q_idx + 1)
-        gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, mcq_gap_pt)))
+        gap_pt = float(custom_gaps.get(q_key, custom_gaps.get(q_idx + 1, QUESTION_GAP_PT)))
         extra_space = max(0.0, gap_pt - float(QUESTION_GAP_PT))
 
         scale = common_scale if common_scale else min(col_width / clip.width, 1.35 if num_cols == 2 else 1.65)
@@ -1363,7 +1362,6 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
     boxes_json = json.dumps(initial_boxes)
     safe_key = re.sub(r"[^a-zA-Z0-9_]", "_", file_key)
     w_gap_pt = int(float(st.session_state.get("rv_w_gap_pt", 90)))
-    mcq_gap_pt = int(float(st.session_state.get("rv_mcq_gap_pt", QUESTION_GAP_PT)))
 
     if os.path.exists(template_file):
         with open(template_file, "r", encoding="utf-8") as f:
@@ -1373,7 +1371,6 @@ def build_interactive_canvas_html(pages_data, initial_boxes, file_key, template_
                .replace("{{BOXES_JSON}}", boxes_json)
                .replace("{{SAFE_KEY}}", safe_key)
                .replace("{{W_GAP_PT}}", str(w_gap_pt))
-               .replace("{{MCQ_GAP_PT}}", str(mcq_gap_pt))
         )
     return "<div style='color:#fff;padding:12px;'>canvas_editor.html ফাইলটি পাওয়া যায়নি।</div>"
 
@@ -1536,8 +1533,6 @@ def render_results_and_review(raw_pdf, file_key):
             payload = json.loads(bridge_val)
             if "w_gap_pt" in payload:
                 st.session_state["rv_w_gap_pt"] = float(payload["w_gap_pt"])
-            if "mcq_gap_pt" in payload:
-                st.session_state["rv_mcq_gap_pt"] = float(payload["mcq_gap_pt"])
 
             new_boxes = payload.get("boxes", [])
             for b in new_boxes:
