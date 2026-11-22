@@ -445,6 +445,29 @@
     min-width: 34px;
     text-align: right;
   }
+  .mcq-gap-ctrl {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #0B0E14;
+    border: 1px solid rgba(16, 185, 129, 0.38);
+    border-radius: 7px;
+    padding: 3px 7px;
+  }
+  .mcq-gap-ctrl input[type=range] {
+    width: 68px;
+    accent-color: #10B981;
+    cursor: pointer;
+    height: 4px;
+  }
+  .mcq-gap-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6EE7B7;
+    min-width: 34px;
+    text-align: right;
+  }
   /* ===== ট্যাগ ইনফো পপ-আপ ===== */
   .tag-pop {
     position: fixed;
@@ -511,6 +534,10 @@
       <div class="w-gap-ctrl" title="লাল (W) বক্সগুলোর নিচের ফাঁকা জায়গার মাপ">
         <input type="range" id="wGapSlider" min="20" max="260" step="5" value="90" />
         <span class="w-gap-val" id="wGapVal">90pt</span>
+      </div>
+      <div class="mcq-gap-ctrl" title="সাধারণ সবুজ (MCQ) বক্সগুলোর নিচের ফাঁকা জায়গার মাপ">
+        <input type="range" id="mcqGapSlider" min="4" max="260" step="2" value="12" />
+        <span class="mcq-gap-val" id="mcqGapVal">12pt</span>
       </div>
       <button class="btn" id="multiToggleBtn" title="একাধিক বক্স সিলেক্ট">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
@@ -719,6 +746,8 @@ let boxes = {{BOXES_JSON}};
 const STORAGE_PAGE_KEY = "ps_cur_page_{{SAFE_KEY}}";
 let wGapPt = parseInt("{{W_GAP_PT}}", 10);
 if (isNaN(wGapPt) || wGapPt < 20) wGapPt = 90;
+let mcqGapPt = parseInt("{{MCQ_GAP_PT}}", 10);
+if (isNaN(mcqGapPt) || mcqGapPt < 4) mcqGapPt = 12;
 
 if (!PAGES || PAGES.length === 0) {
   const shell = document.getElementById('editorShell');
@@ -755,6 +784,8 @@ if (!PAGES || PAGES.length === 0) {
   const wToggleBtn = document.getElementById('wToggleBtn');
   const wGapSlider = document.getElementById('wGapSlider');
   const wGapVal = document.getElementById('wGapVal');
+  const mcqGapSlider = document.getElementById('mcqGapSlider');
+  const mcqGapVal = document.getElementById('mcqGapVal');
   const multiToggleBtn = document.getElementById('multiToggleBtn');
   const selPageAllBtn = document.getElementById('selPageAllBtn');
   const fabAddBtn = document.getElementById('fabAddBtn');
@@ -774,6 +805,14 @@ if (!PAGES || PAGES.length === 0) {
     wGapSlider.addEventListener('input', () => {
       wGapPt = parseInt(wGapSlider.value, 10) || 90;
       wGapVal.textContent = wGapPt + 'pt';
+    });
+  }
+  if (mcqGapSlider && mcqGapVal) {
+    mcqGapSlider.value = mcqGapPt;
+    mcqGapVal.textContent = mcqGapPt + 'pt';
+    mcqGapSlider.addEventListener('input', () => {
+      mcqGapPt = parseInt(mcqGapSlider.value, 10) || 12;
+      mcqGapVal.textContent = mcqGapPt + 'pt';
     });
   }
 
@@ -1433,7 +1472,7 @@ if (!PAGES || PAGES.length === 0) {
         y1: Math.round(b.y1 * 10) / 10,
         w_gap: Boolean(b.w_gap)
       }));
-      const payload = JSON.stringify({ ts: Date.now(), w_gap_pt: wGapPt, boxes: clean });
+      const payload = JSON.stringify({ ts: Date.now(), w_gap_pt: wGapPt, mcq_gap_pt: mcqGapPt, boxes: clean });
       const parentDoc = window.parent.document;
       const inp = parentDoc.querySelector('input[placeholder="BOX_JSON_BRIDGE_MARKER"]')
                || parentDoc.querySelector('input[aria-label="BOX_JSON_BRIDGE"]');
